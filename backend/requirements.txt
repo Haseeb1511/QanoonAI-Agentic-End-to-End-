@@ -1,0 +1,35 @@
+langchain
+langgraph
+langchain_groq
+langchain_community
+
+langgraph
+langchain_openai
+langchain_google_genai
+pypdf
+cryptography
+
+
+# For postgres
+langgraph-checkpoint-postgres
+psycopg2
+pgvector
+# psycopg[binary,pool]
+
+# Web framework
+fastapi
+uvicorn[standard]
+python-multipart   #FastAPI requires python-multipart to handle file uploads (UploadFile, form-data requests, etc.),
+pydantic
+
+
+
+
+
+
+dotenv
+ipykernel
+
+supabase
+
+
