@@ -2,6 +2,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
+import './ChatWindow.css';
+
+
 const API_URL = import.meta.env.VITE_API_URL;
 
 const ChatWindow = ({
@@ -168,6 +171,8 @@ const ChatWindow = ({
                             </p>
                         </div>
                     ) : (
+
+                        // Typing Indicator 
                         <div className="flex flex-col">
                             {messages.map((msg, idx) => (
                                 <motion.div
@@ -176,11 +181,21 @@ const ChatWindow = ({
                                     animate={{ opacity: 1, y: 0 }}
                                     className={`message-bubble ${msg.role === 'human' ? 'user' : 'ai'}`}
                                 >
-                                    {msg.content || (msg.role === 'ai' ? <span className="italic text-gray-400">Thinking...</span> : null)}
+                                    {msg.content || (msg.role === 'ai' && idx === messages.length - 1 && loading && (
+                                        <div className="typing-indicator">
+                                            <span className="typing-dot"></span>
+                                            <span className="typing-dot"></span>
+                                            <span className="typing-dot"></span>
+                                        </div>
+                                    ))}
                                 </motion.div>
                             ))}
                         </div>
-                    )}
+
+
+                   
+                   
+                   )}
                     <div ref={messagesEndRef} />
                 </div>
             </div>
