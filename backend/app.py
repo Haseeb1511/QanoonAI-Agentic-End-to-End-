@@ -17,15 +17,7 @@ from src.utils.file_hash import get_file_hash
 
 # -------------------- APP SETUP --------------------
 
-app = FastAPI(title="QanoonAI")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 UPLOAD_DIR = Path("uploaded_docs")
 UPLOAD_DIR.mkdir(exist_ok=True, parents=True)
@@ -34,13 +26,18 @@ graph = None  # global graph variable default is None
 checkpointer = None  # global checkpointer variable default is None
 
 
-# explian what it do and how it do and hwy it is required
+
 # -------------------- LIFESPAN --------------------
 # we will use asyn context manager as it help in writing async context manager whiich is useful for fastapi as we will use  async funciton in fastapi
 # This is useful for resources that take time to initialize or clean up,like a database
 # connection or, in your case, a LangGraph workflow and Postgres checkpointer
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager handles startup and shutdown.
+    - On startup: Initialize checkpointer and build graph
+    - On shutdown: Cleanup happens automatically via async context manager
+    """
     global graph, checkpointer
 
     async with AsyncPostgresSaver.from_conn_string(CONNECTION_STRING) as cp:
@@ -55,8 +52,19 @@ async def lifespan(app: FastAPI):
 # Before the first request(quesion) it will initlize hte checkpointer and graph 
 # after the app stpops it can clean up resources if needed
 # with out this our enpoint would fail because graph and chekcpointer would be None.
-app.router.lifespan_context = lifespan
+# app.router.lifespan_context = lifespan
 
+
+
+app = FastAPI(title="QanoonAI",lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # -------------------- HELPERS --------------------
 
@@ -112,8 +120,8 @@ def stream_graph(graph, state, config, on_complete=None):
         
         # In SSE every msg is sent as data: <message>\n\n
         # The double newline \n\n is required by SSE protocol to signal end of the event.
-        # our froned can detect this [DONE] message to know that the streaming is complete
-        yield "data: [DONE]\n\n"
+        # our froned can detect this done message to know that the streaming is complete
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -259,6 +267,66 @@ async def follow_up(
     config = {"configurable": {"thread_id": thread_id}}
 
     return stream_graph(graph, state, config, on_complete)
+
+
+
+@app.get("/all_threads")
+async def get_all_threads():
+    """Get all threads with previews"""
+    try:
+        response = (
+            supabase_client
+            .table("threads")
+            .select("thread_id, doc_id, messages")
+            .execute()
+        )
+        
+        threads = []
+        if response.data:
+            for thread in response.data:
+                messages = thread.get("messages", [])
+                preview = "New Chat"
+                if messages and len(messages) > 0:
+                    preview = messages[0].get("content", "New Chat")[:50] + "..."
+                
+                threads.append({
+                    "thread_id": thread["thread_id"],
+                    "doc_id": thread["doc_id"],
+                    "preview": preview
+                })
+        
+        return threads
+    except Exception as e:
+        print(f"❌ Error fetching threads: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+
+@app.get("/get_threads/{thread_id}")
+async def get_threads(thread_id: str):
+    """Get a specific thread's data"""
+    try:
+        response = (
+            supabase_client
+            .table("threads")
+            .select("*")
+            .eq("thread_id", thread_id)
+            .single()
+            .execute()
+        )
+        
+        if response.data:
+            return {
+                "thread_id": response.data["thread_id"],
+                "doc_id": response.data["doc_id"],
+                "messages": response.data["messages"]
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Thread not found")
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Thread not found: {str(e)}")
+
+
 
 
 
