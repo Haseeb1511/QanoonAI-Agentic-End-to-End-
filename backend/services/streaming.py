@@ -1,0 +1,76 @@
+import json, asyncio
+from fastapi.responses import StreamingResponse
+
+
+# ===================== Streaming Graph =====================
+def stream_graph(graph, state, config, on_complete=None):
+
+    async def event_generator():
+        tokens = []
+
+        try:
+            async for event in graph.astream_events(state, config=config, version="v2"):
+                # workflow.add_node("agent_response", nodes.agent_response) ==> as we have this node we check that we only stream from this node(agent)
+                if (
+                        event["event"] == "on_chat_model_stream"
+                        and event.get("metadata", {}).get("langgraph_node") == "agent_response"
+                    ):
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and getattr(chunk, "content", None):
+                        tokens.append(chunk.content) # we also append token in list as to persist the wole content is databse as otherwise we are genrating token by token so it will save incorrectly in database
+                        yield f"data: {json.dumps({'token': chunk.content})}\n\n"
+                        await asyncio.sleep(0)
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+            return
+
+        final_answer = "".join(tokens)  # join all the tokens in single string
+
+        # do this after the entier streaming is finshed(here when all token are streamed and final_answer is joined then we store the the content in the database)
+        if on_complete:
+            await on_complete(final_answer)
+        
+        # In SSE every msg is sent as data: <message>\n\n
+        # The double newline \n\n is required by SSE protocol to signal end of the event.
+        # our froned can detect this done message to know that the streaming is complete
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache", # ensures the browser does not cache the streamed response. Each stream should be fresh.
+            "X-Accel-Buffering": "no",  # used mainly with Nginx or reverse proxies to disable buffering. Without this, tokens may be delivered in large chunks instead of real-time.
+            "Connection": "keep-alive" # keeps the HTTP connection open so multiple messages (tokens) can flow continuously.
+        }
+    )
+
+
+
+#THIS LINE HVAE ISSUE SINCE RE-RWITTEN QUERY ALSO USE LLM IT START STREAMING REWRITTEN QUERY ALONG WIH THE LLM FINAL RESPONESE
+# so we need to filter only on_chat_model_stream event for final LLM response not for re-written query
+# so we can check the event metadata or tags to differentiate between them
+# async for event in graph.astream_events(state, config=config, version="v2"):
+#     if event["event"] == "on_chat_model_stream":
+
+
+# event = {
+#   "event": "on_chat_model_stream",
+#   "name": "ChatOpenAI",
+#   "data": {
+#       "chunk": AIMessageChunk(content="Hel")
+#   },
+#   "tags": ["llm"],
+#   "metadata": {...}
+# }
+
+# langgraph has many kind of event
+# Event name	   ===> Meaning
+# on_chain_start	===> A chain/node started
+# on_chain_end	===> A chain/node finished
+# on_chat_model_start ===>	LLM started
+# on_chat_model_stream ===>	LLM produced a token
+# on_chat_model_end  ===>	LLM finished
+# on_tool_start	 ===> Tool execution started
+# on_tool_end ===>	Tool execution finished
