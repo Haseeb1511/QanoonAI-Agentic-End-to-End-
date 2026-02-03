@@ -2,41 +2,41 @@ import axios from "axios";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL;
 
-export const api = {
-  // Upload PDF and ask initial question
-  askQuestion: async (pdfFile, question) => {
-    const formData = new FormData();
-    formData.append("pdf", pdfFile);
-    formData.append("question", question);
+// ✅ Create axios instance with interceptor
+const axiosInstance = axios.create({
+  baseURL: API_BASE_URL,
+});
+
+// ✅ Add auth token to all requests
+axiosInstance.interceptors.request.use(
+  async (config) => {
+    // Import supabase in your api.jsx file
+    const { supabase } = await import('../supabaseClient');
+    const { data: { session } } = await supabase.auth.getSession();
     
-    const response = await axios.post(`${API_BASE_URL}/ask`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-    return response.data;
+    if (session?.access_token) {
+      config.headers.Authorization = `Bearer ${session.access_token}`;
+    }
+    
+    return config;
   },
+  (error) => Promise.reject(error)
+);
 
-  // Ask follow-up question
-  followUp: async (docId, threadId, question) => {
-    const formData = new FormData();
-    formData.append("doc_id", docId);
-    formData.append("thread_id", threadId);
-    formData.append("question", question);
-
-    const response = await axios.post(`${API_BASE_URL}/follow_up`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-    return response.data;
-  },
-
+export const api = {
   // Get all threads for sidebar
-  getAllThreads: async () => {
-    const response = await axios.get(`${API_BASE_URL}/all_threads`);
+  getAllThreads: async (token) => {
+    const response = await axiosInstance.get('/all_threads', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
     return response.data;
   },
 
   // Get specific thread details
-  getThread: async (threadId) => {
-    const response = await axios.get(`${API_BASE_URL}/get_threads/${threadId}`);
+  getThread: async (threadId, token) => {
+    const response = await axiosInstance.get(`/get_threads/${threadId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
     return response.data;
   }
 };

@@ -1,11 +1,11 @@
-from fastapi import HTTPException, UploadFile, Form, File, Request
+from fastapi import HTTPException, UploadFile, Form, File, Request,Depends
 from langchain_core.messages import HumanMessage, AIMessage
 from src.db_connection.connection import supabase_client
 from backend.services.initial_state import prepare_initial_state
 from backend.services.streaming import stream_graph
 from backend.routes.threads import load_thread_messages
 
-
+from backend.routes.auth import get_current_user  # for user authentication
 from fastapi import APIRouter
 
 router = APIRouter()
@@ -16,16 +16,18 @@ router = APIRouter()
 async def ask_question(
     request: Request,
     pdf: UploadFile = File(...),
-    question: str = Form(...)
+    question: str = Form(...),
+    user=Depends(get_current_user)
 ):
     state, thread_id, doc_id = await prepare_initial_state(pdf, question)
 
-    # as above when streamin is done and message is append as single sting we need to store the question and answer in database
+    # as above when streaming is done and message is append as single sting we need to store the question and answer in database
     # so we define on_complete function to do that
     async def on_complete(answer: str):
         supabase_client.table("threads").upsert({
             "thread_id": thread_id,
             "doc_id": doc_id,
+            "user_id":user.id, # add supbase user id for auth
             "messages": [
                 {"role": "human", "content": question},
                 {"role": "ai", "content": answer}
@@ -44,9 +46,10 @@ async def follow_up(
     request: Request,
     thread_id: str = Form(...),
     question: str = Form(...),
+    user=Depends(get_current_user)
 ):
     # first we will load previous message for the seelcted thread id that user had previously used
-    previous_messages, doc_id = await load_thread_messages(thread_id)
+    previous_messages, doc_id = await load_thread_messages(thread_id,user.id)
 
     # then we will fetch document info to get collection name
     # as our langgraph vectorstore is used collection name to fetch relevant chunks from vectorstore

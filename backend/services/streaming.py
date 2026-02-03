@@ -29,7 +29,12 @@ def stream_graph(graph, state, config, on_complete=None):
 
         # do this after the entier streaming is finshed(here when all token are streamed and final_answer is joined then we store the the content in the database)
         if on_complete:
-            await on_complete(final_answer)
+            try:
+                await on_complete(final_answer)
+            except Exception as e:
+                print(f"Error in on_complete callback: {e}")
+                # Don't yield error here - the answer was already streamed successfully
+                # Just log the error and continue to send the done event
         
         # In SSE every msg is sent as data: <message>\n\n
         # The double newline \n\n is required by SSE protocol to signal end of the event.

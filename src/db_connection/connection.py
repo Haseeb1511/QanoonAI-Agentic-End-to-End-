@@ -12,7 +12,7 @@ load_dotenv(dotenv_path=env_path)
 
 
 CONNECTION_STRING = os.environ.get("CONNECTION_STRING","")
-SUPERBASE_SERVICE_ROLE_KEY = os.environ.get("SUPERBASE_SERVICE_ROLE_KEY","")
+SUPERBASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY","")
 SUPABASE_URL = os.environ.get("SUPABASE_URL","")
 
 

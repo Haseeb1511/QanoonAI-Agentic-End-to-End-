@@ -3,9 +3,9 @@ import { Send, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 import './ChatWindow.css';
+import { supabase } from '../../supabaseClient';
 
-
-const API_URL = import.meta.env.VITE_API_URL;
+const API_URL = import.meta.env.VITE_BACKEND_URL;
 
 const ChatWindow = ({
     activeThread,
@@ -34,45 +34,53 @@ const ChatWindow = ({
     }, [input]);
 
     /* ------------------ Send Message ------------------ */
-    const handleSubmit = async (e) => {
-        e?.preventDefault();
-        if (!input.trim() || loading) return;
+const handleSubmit = async (e) => {
+    e?.preventDefault();
+    if (!input.trim() || loading) return;
 
-        const message = input.trim();
-        setInput("");
-        setLoading(true);
-        abortControllerRef.current = new AbortController();
+    const message = input.trim();
+    setInput("");
+    setLoading(true);
+    abortControllerRef.current = new AbortController();
 
-        // Calculate the bot message index BEFORE adding messages
-        const botMessageIndex = messages.length + 1;
+    const botMessageIndex = messages.length + 1;
+    const newMessages = [
+        ...messages,
+        { role: 'human', content: message },
+        { role: 'ai', content: '' }
+    ];
+    onUpdateMessages(newMessages);
 
-        // Add user message and empty bot message together
-        const newMessages = [
-            ...messages,
-            { role: 'human', content: message },
-            { role: 'ai', content: '' }
-        ];
-        onUpdateMessages(newMessages);
+    try {
+        // ✅ Get the session token
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
 
-        try {
-            const url = activeThread
-                ? `${API_URL}/follow_up`
-                : `${API_URL}/ask`;
+        if (!token) {
+            throw new Error('No authentication token found');
+        }
 
-            const formData = new FormData();
-            if (!activeThread) {
-                formData.append('pdf', file);
-            } else {
-                formData.append('doc_id', activeThread.doc_id);
-                formData.append('thread_id', activeThread.thread_id);
-            }
-            formData.append('question', message);
+        const url = activeThread
+            ? `${API_URL}/follow_up`
+            : `${API_URL}/ask`;
 
-            const response = await fetch(url, {
-                method: 'POST',
-                body: formData,
-                signal: abortControllerRef.current.signal,
-            });
+        const formData = new FormData();
+        if (!activeThread) {
+            formData.append('pdf', file);
+        } else {
+            formData.append('thread_id', activeThread.thread_id);
+        }
+        formData.append('question', message);
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`, // ✅ Add auth header
+            },
+            body: formData,
+            signal: abortControllerRef.current.signal,
+        });
+
 
             if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
             if (!response.body) throw new Error('No response body');

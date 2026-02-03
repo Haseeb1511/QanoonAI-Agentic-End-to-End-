@@ -53,3 +53,7 @@ urdu translation   5555
 modulat fastapi   4444
 docker fast api ---> aws
 frontend  ---> vercel
+
+
+
+# Google OAuth 2.0 login + JWT-based authentication/authorization

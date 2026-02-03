@@ -1,22 +1,22 @@
-from fastapi import HTTPException
+from fastapi import HTTPException,Depends
 from src.db_connection.connection import supabase_client
 from fastapi import APIRouter
-
+from backend.routes.auth import get_current_user
 
 router = APIRouter()
 
 # ============================= Load Thread Messages =============================
 
-async def load_thread_messages(thread_id: str):
+async def load_thread_messages(thread_id: str,user_id:str):
     response = (
         supabase_client
         .table("threads")
         .select("messages, doc_id")
         .eq("thread_id", thread_id)
+        .eq("user_id",user_id)   # filter by login user id
         .single()
         .execute()
     )
-
     if not response.data:
         raise HTTPException(status_code=404, detail="Thread not found")
 
@@ -27,13 +27,14 @@ async def load_thread_messages(thread_id: str):
 # ============================= Get All Threads with Previews =============================
 # sidebar chats threads
 @router.get("/all_threads")
-async def get_all_threads():
+async def get_all_threads(user=Depends(get_current_user)):
     """Get all threads with previews"""
     try:
         response = (
             supabase_client
             .table("threads")
             .select("thread_id, doc_id, messages")
+            .eq("user_id",user.id)  # filter by login user
             .execute()
         )
         
@@ -62,9 +63,9 @@ async def get_all_threads():
 # ============================= Get Specific Thread Data =============================
 
 @router.get("/get_threads/{thread_id}")
-async def get_threads(thread_id: str):
+async def get_threads(thread_id: str,user=Depends(get_current_user)):
     """Get a specific thread's data"""
-    messages, doc_id = await load_thread_messages(thread_id)
+    messages, doc_id = await load_thread_messages(thread_id,user.id)
     return {
         "thread_id": thread_id,
         "doc_id": doc_id,

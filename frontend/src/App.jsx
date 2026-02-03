@@ -1,56 +1,82 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
+import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
+import Login from "./components/Login";
 import { api } from "./api";
+import { supabase } from "../supabaseClient"; // make sure supabaseClient.js exists
 
-function App() {
+function ChatPage() {
+  const navigate = useNavigate();
   const [threads, setThreads] = useState([]);
   const [activeThread, setActiveThread] = useState(null);
   const [messages, setMessages] = useState([]);
   const [file, setFile] = useState(null);
 
-  // Load threads on mount
   useEffect(() => {
-    loadThreads();
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        navigate("/login");
+      } else {
+        await loadThreads(session.access_token);
+      }
+    };
+
+    checkSession();
   }, []);
 
-  const loadThreads = async () => {
+  const loadThreads = async (token) => {
     try {
-      const data = await api.getAllThreads();
-      setThreads(data || []);
+      let data = await api.getAllThreads(token);
+
+      // ⚠️ Ensure threads is always an array
+      if (!Array.isArray(data)) {
+        console.warn("Threads data is not an array. Converting to empty array.");
+        data = [];
+      }
+
+      setThreads(data);
     } catch (error) {
       console.error("Failed to load threads:", error);
+      setThreads([]); // fallback to empty array
     }
   };
 
-  // When user clicks a thread
   const handleSelectThread = async (thread) => {
     setActiveThread(thread);
-    setMessages([]); // Clear UI while loading messages
+    setMessages([]);
 
     try {
-      const data = await api.getThread(thread.thread_id);
-      setMessages(data.messages || []);
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      const data = await api.getThread(thread.thread_id, token);
+
+      // ⚠️ Ensure messages is always an array
+      if (!Array.isArray(data?.messages)) {
+        setMessages([]);
+      } else {
+        setMessages(data.messages);
+      }
     } catch (error) {
       console.error("Failed to load thread details:", error);
+      setMessages([]);
     }
 
-    // ❗ Keep file upload enabled even when selecting thread
     setFile(null);
   };
 
-  // When user clicks NEW CHAT
   const handleNewChat = () => {
     setActiveThread(null);
     setMessages([]);
-    setFile(null); // allow new file upload
+    setFile(null);
   };
 
-  // When user uploads a new PDF - clear chat and start fresh
   const handleFileUpload = (newFile) => {
     setFile(newFile);
     if (newFile) {
-      // Clear active thread and messages to start fresh chat
       setActiveThread(null);
       setMessages([]);
     }
@@ -58,7 +84,6 @@ function App() {
 
   return (
     <div className="app-container">
-
       <Sidebar
         threads={threads}
         activeThreadId={activeThread?.thread_id}
@@ -75,8 +100,19 @@ function App() {
         onUpdateMessages={setMessages}
         file={file}
       />
-
     </div>
+  );
+}
+
+// App Component with Routing
+function App() {
+  return (
+    <Router>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/" element={<ChatPage />} />
+      </Routes>
+    </Router>
   );
 }
 
