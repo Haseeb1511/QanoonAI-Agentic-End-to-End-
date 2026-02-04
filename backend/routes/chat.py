@@ -8,6 +8,8 @@ from backend.routes.threads import load_thread_messages
 from backend.routes.auth import get_current_user  # for user authentication
 from fastapi import APIRouter
 
+from fastapi.concurrency import run_in_threadpool
+
 router = APIRouter()
 
 
@@ -88,7 +90,9 @@ async def follow_up(
         "user_id": user.id,   # unique user id from supbase
         "doc_id": doc_id,  # which doc_id we are using
         "collection_name": collection_name,  # which vectorstore collection to use
-        "messages": messages # list of all previous messages + new question(to provide context to the model)
+        "messages": messages, # list of all previous messages + new question(to provide context to the model)
+        "vectorstore_uploaded": True # PDF already ingested, skip document ingestion
+
     }
 
     # after streaming is done we need to append the new question and answer to the previous messages and update the database
@@ -97,9 +101,10 @@ async def follow_up(
         previous_messages.append({"role": "ai", "content": answer})
 
         # here we will use update insted of upsert as the thread already exist we just need to update the messages field
-        supabase_client.table("threads").update(
+        await run_in_threadpool(supabase_client.table("threads").update(
             {"messages": previous_messages}
         ).eq("thread_id", thread_id).execute()
+        )
 
     config = {"configurable": {"thread_id": thread_id}}
 

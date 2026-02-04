@@ -1,5 +1,4 @@
 import os
-
 from langchain_core.messages import (
     HumanMessage,
     AIMessage,
@@ -10,13 +9,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # from langchain_community.vectorstores.pgvector import PGVector
 from langchain_postgres import PGVector
 from tqdm import tqdm
-
 from langchain.messages import RemoveMessage # to delete something from state permenantly
-
-
 from langchain_community.document_loaders import DirectoryLoader
-
-
 from sqlalchemy.pool import NullPool
 
 # import from other custom modules
@@ -24,9 +18,9 @@ from src.prompts.rag_prompt import PROMPT_TEMPLATE
 from src.db_connection.connection import CONNECTION_STRING 
 from src.utils.file_hash import get_file_hash
 from src.graph.state import AgentState
+from fastapi.concurrency import run_in_threadpool
 
-
-
+# SUPBAE CLIENT IS SYNCHRONOUS SO WE USE run_in_threadpool TO AVOID BLOCKING THE MAIN THREAD
 
 
 class GraphNodes:
@@ -38,6 +32,10 @@ class GraphNodes:
     
     
     def set_doc_id(self,state:AgentState):
+        # Skip if doc_id already exists (follow-up requests already have doc_id)
+        if state.get("doc_id"):
+            return state
+            
         path = os.path.abspath(state["documents_path"])
         
         if not os.path.isfile(path):
@@ -46,8 +44,8 @@ class GraphNodes:
         return state
 
 
-
-    def check_pdf_already_uploaded(self,state:AgentState):
+    # as uspbase = network call  so we make async function to avoid blocking the main thread and also we can do other task while waiting for response from supbase
+    async def check_pdf_already_uploaded(self,state:AgentState):
         """Checkif PDF already exist in SUpbase
         Same PDF:    
         - Different user
@@ -58,11 +56,13 @@ class GraphNodes:
             return state
         # we check id documnet exist already or not and also check for user  if for sepcific user it exist or not (sometime one user might have already uploaded the same document )
         
-        response = (
-                        self.supabase_client.table("documents")
+        # as supbase client does not suppor async we use run in threadpool
+        # run_in_threadpool expects a callable (lambda), not the result of the call
+        response = await run_in_threadpool(
+            lambda: self.supabase_client.table("documents")
                         .select("doc_id")
-                        .eq("doc_id",state["doc_id"])  # do id
-                        .eq("user_id",state["user_id"])   # user id 
+                        .eq("doc_id", state["doc_id"])
+                        .eq("user_id", state["user_id"])
                         .limit(1)
                         .execute()
         )
@@ -75,7 +75,7 @@ class GraphNodes:
 
 
 
-    def document_ingestion(self,state: AgentState):
+    async def document_ingestion(self,state: AgentState):
 
         if state.get("vectorstore_uploaded"):
             print("Skipping vectoingestion - PDF already exist")
@@ -121,7 +121,9 @@ class GraphNodes:
         # upload embedding 
         for i in tqdm(range(0, len(chunks), batch_size), desc="Uploading chunks"):
             batch = chunks[i:i + batch_size]
-            vectorstore.add_documents(batch)
+            # async 
+            await run_in_threadpool(vectorstore.add_documents, batch)
+            # vectorstore.add_documents(batch)
         
 
         # Insert metadata to supbase table
@@ -136,7 +138,9 @@ class GraphNodes:
         ]
         if rows:
             try:
-                self.supabase_client.table("documents").insert(rows).execute()
+                await run_in_threadpool(
+                    lambda: self.supabase_client.table("documents").insert(rows).execute()
+                )
             except Exception:
                 print("Chunks already exist — skipping insert")
     
@@ -148,7 +152,7 @@ class GraphNodes:
 
 
 
-    def query_rewriter(self,state: AgentState):
+    async def query_rewriter(self,state: AgentState):
         """Rewrite follow-up questions to be standalone using conversation context"""
         
         human_messages = [m for m in state.get("messages", []) if isinstance(m, HumanMessage)]
@@ -174,8 +178,8 @@ class GraphNodes:
                 Question: {current_query}
 
                 Standalone question:"""
-                        
-            response = self.llm.invoke([HumanMessage(content=rewrite_prompt)])
+            
+            response = await self.llm.ainvoke([HumanMessage(content=rewrite_prompt)])
             rewritten_query = response.content.strip()
             
             print(f"Original: {current_query}")
@@ -238,7 +242,7 @@ class GraphNodes:
 
 
 
-    def summary_creation(self,state:AgentState):
+    async def summary_creation(self,state:AgentState):
         existing_summary = state["summary"] # we first load existing summary
 
         # We have two scenrio:
@@ -256,7 +260,7 @@ class GraphNodes:
 
         print("Callin summary LLM") # debugging
         # generate summary
-        response = self.llm.invoke(message_for_summary)
+        response = await self.llm.ainvoke(message_for_summary)
 
         # now delete the orignal messages that have been summarized
         message_to_delete = state["messages"][:-2] if len(state["messages"]) > 2 else []
@@ -273,7 +277,7 @@ class GraphNodes:
 
 
     # cat node with memory
-    def agent_response(self,state: AgentState):
+    async def agent_response(self,state: AgentState):
         """
         Generates the LLM response for the current query, injecting memory (summary or previous messages)
         and RAG context into the prompt.
@@ -310,7 +314,7 @@ class GraphNodes:
         prompt_messages.append(HumanMessage(content=formatted_prompt))
 
         print("Calling Agent Response LLM")  # debugging
-        response = self.llm.invoke(prompt_messages)
+        response = await self.llm.ainvoke(prompt_messages)
 
         # Save AI response in state
         state["messages"].append(AIMessage(content=response.content))
@@ -325,3 +329,48 @@ class GraphNodes:
             return "query_rewriter"   # already exists → query
         else:
             return "document_ingestion"  # new → ingest
+
+
+
+# ASYNC HELP WHERN THIER ARE MULTIPLE USER SO IT DOES  NOT BLOCK THE SERVER WHICH CAUSE ISSUE FOR OTHER USER
+
+#ASYNC CONDTIONS:(library must support async if not then use sync)
+# You make a function async when it waits.
+# Not when it’s “slow”.
+# Not when it “feels important”.
+# When it waits for something outside your Python process.
+    
+# When you SHOULD use async
+# Network calls (always async)
+
+#1️⃣ Anything that:
+# Talks to the internet
+# Talks to another service
+# Calls an API
+
+# Examples (your code):
+# OpenAI (llm.invoke → llm.ainvoke)
+# Supabase queries
+# OAuth / JWT verification
+# Webhooks
+# External HTTP APIs
+
+# 🧠 Reason:
+# While waiting, Python can serve other users.
+
+
+# 2️⃣ DATABASE CALL USALLY ASYNC
+
+
+#3️⃣ Waiting on something (timeouts, retries, backoff)
+
+
+
+# ===> When you should NOT use asyn
+# CPU-bound work (keep sync)
+# PDF parsing
+# Text splitting
+# Hashing files
+# Regex
+# JSON manipulation
+# Prompt formatting
