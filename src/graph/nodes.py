@@ -32,7 +32,7 @@ class GraphNodes:
     
     
     def set_doc_id(self,state:AgentState):
-        # Skip if doc_id already exists (follow-up requests already have doc_id)
+        # Skip if doc_id already exists 
         if state.get("doc_id"):
             return state
             

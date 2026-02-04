@@ -11,7 +11,8 @@ const ChatWindow = ({
     activeThread,
     messages,
     onUpdateMessages, // callback to update messages in parent
-    file
+    file,
+    onNewThreadCreated // NEW: callback when first question creates a thread
 }) => {
     const [input, setInput] = useState("");
     const [loading, setLoading] = useState(false); //  Move loading state here
@@ -34,52 +35,53 @@ const ChatWindow = ({
     }, [input]);
 
     /* ------------------ Send Message ------------------ */
-const handleSubmit = async (e) => {
-    e?.preventDefault();
-    if (!input.trim() || loading) return;
+    const handleSubmit = async (e) => {
+        e?.preventDefault();
+        if (!input.trim() || loading) return;
 
-    const message = input.trim();
-    setInput("");
-    setLoading(true);
-    abortControllerRef.current = new AbortController();
+        const message = input.trim();
+        setInput("");
+        setLoading(true);
+        abortControllerRef.current = new AbortController();
 
-    const botMessageIndex = messages.length + 1;
-    const newMessages = [
-        ...messages,
-        { role: 'human', content: message },
-        { role: 'ai', content: '' }
-    ];
-    onUpdateMessages(newMessages);
+        const botMessageIndex = messages.length + 1;
+        const newMessages = [
+            ...messages,
+            { role: 'human', content: message },
+            { role: 'ai', content: '' }
+        ];
+        onUpdateMessages(newMessages);
 
-    try {
-        // ✅ Get the session token
-        const { data: { session } } = await supabase.auth.getSession();
-        const token = session?.access_token;
+        try {
+            // ✅ Get the session token
+            const { data: { session } } = await supabase.auth.getSession();
+            const token = session?.access_token;
 
-        if (!token) {
-            throw new Error('No authentication token found');
-        }
+            if (!token) {
+                throw new Error('No authentication token found');
+            }
 
-        const url = activeThread
-            ? `${API_URL}/follow_up`
-            : `${API_URL}/ask`;
+            const isNewThread = !activeThread; // Track if this is a new thread
+            const url = isNewThread
+                ? `${API_URL}/ask`
+                : `${API_URL}/follow_up`;
 
-        const formData = new FormData();
-        if (!activeThread) {
-            formData.append('pdf', file);
-        } else {
-            formData.append('thread_id', activeThread.thread_id);
-        }
-        formData.append('question', message);
+            const formData = new FormData();
+            if (!activeThread) {
+                formData.append('pdf', file);
+            } else {
+                formData.append('thread_id', activeThread.thread_id);
+            }
+            formData.append('question', message);
 
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${token}`, // ✅ Add auth header
-            },
-            body: formData,
-            signal: abortControllerRef.current.signal,
-        });
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`, // ✅ Add auth header
+                },
+                body: formData,
+                signal: abortControllerRef.current.signal,
+            });
 
 
             if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
@@ -98,39 +100,39 @@ const handleSubmit = async (e) => {
                 const lines = buffer.split("\n");
                 buffer = lines.pop() || '';
 
-                    for (const line of lines) {
-                        const trimmedLine = line.trim();
-                        if (!trimmedLine.startsWith('data:')) continue;
+                for (const line of lines) {
+                    const trimmedLine = line.trim();
+                    if (!trimmedLine.startsWith('data:')) continue;
 
-                        try {
-                            // Parse the JSON first
-                            const data = JSON.parse(trimmedLine.replace(/^data:\s*/, ''));
+                    try {
+                        // Parse the JSON first
+                        const data = JSON.parse(trimmedLine.replace(/^data:\s*/, ''));
 
-                            // ✅ Check for 'done' after parsing
-                            if (data.type === 'done') {
-                                console.log("Streaming finished");
-                                setLoading(false); // stop loader
-                                break; // exit loop since streaming is complete
-                            }
-
-                            if (data.token) {
-                                botMessage += data.token;
-                                onUpdateMessages(prev => {
-                                    const updated = [...prev];
-                                    updated[botMessageIndex] = { role: 'ai', content: botMessage };
-                                    return updated;
-                                });
-                            } else if (data.type === 'error') {
-                                onUpdateMessages(prev => {
-                                    const updated = [...prev];
-                                    updated[botMessageIndex] = { role: 'ai', content: `Error: ${data.message}` };
-                                    return updated;
-                                });
-                            }
-                        } catch (err) {
-                            console.error('Failed to parse SSE:', err);
+                        // ✅ Check for 'done' after parsing
+                        if (data.type === 'done') {
+                            console.log("Streaming finished");
+                            setLoading(false); // stop loader
+                            break; // exit loop since streaming is complete
                         }
+
+                        if (data.token) {
+                            botMessage += data.token;
+                            onUpdateMessages(prev => {
+                                const updated = [...prev];
+                                updated[botMessageIndex] = { role: 'ai', content: botMessage };
+                                return updated;
+                            });
+                        } else if (data.type === 'error') {
+                            onUpdateMessages(prev => {
+                                const updated = [...prev];
+                                updated[botMessageIndex] = { role: 'ai', content: `Error: ${data.message}` };
+                                return updated;
+                            });
+                        }
+                    } catch (err) {
+                        console.error('Failed to parse SSE:', err);
                     }
+                }
 
             }
 
@@ -140,6 +142,9 @@ const handleSubmit = async (e) => {
                     updated[botMessageIndex] = { role: 'ai', content: "No response received. Please try again." };
                     return updated;
                 });
+            } else if (isNewThread && onNewThreadCreated) {
+                // NEW: Notify parent to refresh threads and set active thread
+                await onNewThreadCreated();
             }
         } catch (err) {
             if (err.name !== 'AbortError') {
@@ -172,10 +177,10 @@ const handleSubmit = async (e) => {
             <div className="chat-main custom-scrollbar">
                 <div className="chat-inner">
                     {messages.length === 0 ? (
-                    <div className="empty-state">
-                        <h1>How can I help you?</h1>
-                        <p>{file ? `"${file.name}" is ready. Ask me anything.` : "Upload a document to get started."}</p>
-                    </div>
+                        <div className="empty-state">
+                            <h1>How can I help you?</h1>
+                            <p>{file ? `"${file.name}" is ready. Ask me anything.` : "Upload a document to get started."}</p>
+                        </div>
 
                     ) : (
 
@@ -188,26 +193,26 @@ const handleSubmit = async (e) => {
                                     animate={{ opacity: 1, y: 0 }}
                                     className={`message-bubble ${msg.role === 'human' ? 'user' : 'ai'}`}
                                 >
-                            {msg.content ? (
-                                <div className="message-content">
-                                    {msg.content}
-                                </div>
-                            ) : msg.role === 'ai' && idx === messages.length - 1 && loading ? (
-                                <div className="typing-indicator">
-                                    <span className="typing-dot"></span>
-                                    <span className="typing-dot"></span>
-                                    <span className="typing-dot"></span>
-                                </div>
-                    ) : null}
+                                    {msg.content ? (
+                                        <div className="message-content">
+                                            {msg.content}
+                                        </div>
+                                    ) : msg.role === 'ai' && idx === messages.length - 1 && loading ? (
+                                        <div className="typing-indicator">
+                                            <span className="typing-dot"></span>
+                                            <span className="typing-dot"></span>
+                                            <span className="typing-dot"></span>
+                                        </div>
+                                    ) : null}
 
                                 </motion.div>
                             ))}
                         </div>
 
 
-                   
-                   
-                   )}
+
+
+                    )}
                     <div ref={messagesEndRef} />
                 </div>
             </div>

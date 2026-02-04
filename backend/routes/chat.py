@@ -9,6 +9,7 @@ from backend.routes.auth import get_current_user  # for user authentication
 from fastapi import APIRouter
 
 from fastapi.concurrency import run_in_threadpool
+import time
 
 router = APIRouter()
 
@@ -22,10 +23,16 @@ async def ask_question(
     user=Depends(get_current_user)
 ):
     state, thread_id, doc_id = await prepare_initial_state(pdf, question,request)
+    
+    start_time = time.time()  # start timer before streaming
 
     # as above when streaming is done and message is append as single sting we need to store the question and answer in database
     # so we define on_complete function to do that
     async def on_complete(answer: str):
+        end_time = time.time()  # stop timer after streaming finishes
+        duration = end_time - start_time
+        print(f"[Timer] /ask query took {duration:.2f} seconds")
+
         supabase_client.table("threads").upsert({
             "thread_id": thread_id,
             "doc_id": doc_id,
@@ -38,7 +45,9 @@ async def ask_question(
 
     config = {"configurable": {"thread_id": thread_id}}
     graph = request.app.state.graph # we fetch the graph instance from app state
-    return stream_graph(graph, state, config, on_complete)
+    
+    response = stream_graph(graph, state, config, on_complete)
+    return response
 
 
 # ===================== Follow-up Question Endpoint =====================
@@ -94,9 +103,14 @@ async def follow_up(
         "vectorstore_uploaded": True # PDF already ingested, skip document ingestion
 
     }
+    start_time = time.time()  # start timer before streaming
 
     # after streaming is done we need to append the new question and answer to the previous messages and update the database
     async def on_complete(answer: str):
+        end_time = time.time()  # stop timer after streaming finishes
+        duration = end_time - start_time
+        print(f"[Timer] /follow_up query took {duration:.2f} seconds")
+
         previous_messages.append({"role": "human", "content": question})
         previous_messages.append({"role": "ai", "content": answer})
 
@@ -109,7 +123,8 @@ async def follow_up(
     config = {"configurable": {"thread_id": thread_id}}
 
     graph = request.app.state.graph  # we fetch the graph instance from app state
-    return stream_graph(graph, state, config, on_complete)
+    response = stream_graph(graph, state, config, on_complete)
+    return response
 
 
 
