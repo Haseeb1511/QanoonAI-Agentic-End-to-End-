@@ -251,6 +251,21 @@ const ChatWindow = ({
     }
   };
 
+
+  // ========================= Waveform animation =========================
+// Simple visual indicator so user KNOWS recording is active
+const Waveform = () => {
+  return (
+    <div className="waveform">
+      <span />
+      <span />
+      <span />
+      <span />
+    </div>
+  );
+};
+
+
   // ========================= Render Chat ================================
   return (
     <div className="chat-container">
@@ -293,18 +308,33 @@ const ChatWindow = ({
             disabled={loading || (!activeThread && !file)}
           />
 
-          <div className="actions">
-            <button className="send-btn" onClick={handleSubmit} disabled={loading || !input.trim()}>
-              {loading ? <Loader2 className="animate-spin" /> : <Send />}
-            </button>
+           <div className="actions">
+          {/* Send button */}
+          <button
+            className="send-btn"
+            onClick={handleSubmit}
+            disabled={loading || !input.trim()}
+          >
+            {loading ? <Loader2 className="animate-spin" /> : <Send />}
+          </button>
 
-            <button onClick={recording ? stopRecording : startRecording} disabled={loading}>
-              <Mic />
-            </button>
+          {/* Audio record button
+              - Shows Mic when idle
+              - Shows animated waveform when recording
+          */}
+          <button
+            className={`mic-btn ${recording ? "recording" : ""}`}
+            onClick={recording ? stopRecording : startRecording}
+            disabled={loading}
+          >
+            {recording ? <Waveform /> : <Mic />}
+          </button>
+        </div>
+
+
           </div>
         </div>
       </div>
-    </div>
   );
 };
 

@@ -256,3 +256,62 @@
     background: none;
     padding: 0;
 }
+
+
+
+/* =========================
+   Mic Button + Waveform
+========================= */
+
+/* Mic button base */
+.mic-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Recording state */
+.mic-btn.recording {
+    background-color: rgba(255, 0, 0, 0.1);
+    color: red;
+}
+
+/* Waveform container */
+.waveform {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+
+/* Individual bars */
+.waveform span {
+    width: 3px;
+    height: 12px;
+    background: red;
+    border-radius: 2px;
+    animation: wave 1.2s infinite ease-in-out;
+}
+
+/* Staggered animation */
+.waveform span:nth-child(1) { animation-delay: 0s; }
+.waveform span:nth-child(2) { animation-delay: 0.15s; }
+.waveform span:nth-child(3) { animation-delay: 0.3s; }
+.waveform span:nth-child(4) { animation-delay: 0.45s; }
+
+@keyframes wave {
+    0%, 100% {
+        height: 8px;
+        opacity: 0.4;
+    }
+    50% {
+        height: 18px;
+        opacity: 1;
+    }
+}
