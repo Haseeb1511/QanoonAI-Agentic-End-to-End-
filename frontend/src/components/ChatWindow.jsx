@@ -1,254 +1,311 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import React, { useState, useRef, useEffect } from "react";
+import { Send, Loader2, Mic } from "lucide-react";
+import { motion } from "framer-motion";
 
-import './ChatWindow.css';
-import { supabase } from '../../supabaseClient';
+import "./ChatWindow.css";
+import { supabase } from "../../supabaseClient";
 
 const API_URL = import.meta.env.VITE_BACKEND_URL;
 
 const ChatWindow = ({
-    activeThread,
-    messages,
-    onUpdateMessages, // callback to update messages in parent
-    file,
-    onNewThreadCreated // NEW: callback when first question creates a thread
+  activeThread,
+  messages,
+  onUpdateMessages,      // callback from parent to update messages
+  file,
+  onNewThreadCreated     // callback when a new thread is created
 }) => {
-    const [input, setInput] = useState("");
-    const [loading, setLoading] = useState(false); //  Move loading state here
-    const messagesEndRef = useRef(null);
-    const textareaRef = useRef(null);
-    const abortControllerRef = useRef(null);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [recording, setRecording] = useState(false);
 
-    /* ------------------ Scroll ------------------ */
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    };
-    useEffect(() => scrollToBottom(), [messages, loading]);
+  const messagesEndRef = useRef(null);
+  const textareaRef = useRef(null);
 
-    /* ------------------ Auto-resize textarea ------------------ */
-    useEffect(() => {
-        if (textareaRef.current) {
-            textareaRef.current.style.height = 'auto';
-            textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
+  const abortControllerRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+
+  // ========================= Auto-scroll messages =========================
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  // ========================= Auto-adjust textarea height ==================
+  useEffect(() => {
+    if (!textareaRef.current) return;
+    textareaRef.current.style.height = "auto";
+    textareaRef.current.style.height = textareaRef.current.scrollHeight + "px";
+  }, [input]);
+
+  // ========================= Helper: Stream AI response =================
+  const handleStreamResponse = async (response, botMessageIndex) => {
+    if (!response.body) return setLoading(false);
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+
+    let buffer = "";
+    let botMessage = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const data = JSON.parse(line.replace(/^data:\s*/, ""));
+
+        // Stream AI tokens
+        if (data.token) {
+          botMessage += data.token;
+          onUpdateMessages((prev) => {
+            const updated = [...prev];
+            updated[botMessageIndex] = { role: "ai", content: botMessage };
+            return updated;
+          });
         }
-    }, [input]);
 
-    /* ------------------ Send Message ------------------ */
-    const handleSubmit = async (e) => {
-        e?.preventDefault();
-        if (!input.trim() || loading) return;
+        // Done event
+        if (data.type === "done") {
+          setLoading(false);
+          return;
+        }
 
-        const message = input.trim();
-        setInput("");
-        setLoading(true);
-        abortControllerRef.current = new AbortController();
+        // Thread creation event
+        if (data.type === "thread_created") {
+          onNewThreadCreated?.(data.thread_id);
+        }
+      }
+    }
+  };
 
-        const botMessageIndex = messages.length + 1;
-        const newMessages = [
-            ...messages,
-            { role: 'human', content: message },
-            { role: 'ai', content: '' }
-        ];
-        onUpdateMessages(newMessages);
+  // ========================= Submit text question =======================
+  const handleSubmit = async (e) => {
+    e?.preventDefault();
+    if (!input.trim() || loading) return;
 
-        try {
-            // ✅ Get the session token
-            const { data: { session } } = await supabase.auth.getSession();
-            const token = session?.access_token;
+    const userMessage = input.trim();
+    setInput("");
+    setLoading(true);
+    abortControllerRef.current = new AbortController();
 
-            if (!token) {
-                throw new Error('No authentication token found');
-            }
+    const botMessageIndex = messages.length + 1;
 
-            const isNewThread = !activeThread; // Track if this is a new thread
-            const url = isNewThread
-                ? `${API_URL}/ask`
-                : `${API_URL}/follow_up`;
+    // Add placeholders for human and AI messages
+    onUpdateMessages([
+      ...messages,
+      { role: "human", content: userMessage },
+      { role: "ai", content: "" }
+    ]);
 
-            const formData = new FormData();
-            if (!activeThread) {
-                formData.append('pdf', file);
-            } else {
-                formData.append('thread_id', activeThread.thread_id);
-            }
-            formData.append('question', message);
+    try {
+      const {
+        data: { session }
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error("No auth token");
 
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`, // ✅ Add auth header
-                },
-                body: formData,
-                signal: abortControllerRef.current.signal,
+      const isNewThread = !activeThread;
+      const url = isNewThread ? `${API_URL}/ask` : `${API_URL}/follow_up`;
+
+      const formData = new FormData();
+      if (isNewThread) formData.append("pdf", file);
+      else formData.append("thread_id", activeThread.thread_id);
+
+      formData.append("question", userMessage);
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+        signal: abortControllerRef.current.signal
+      });
+
+      await handleStreamResponse(response, botMessageIndex);
+    } catch (err) {
+      console.error(err);
+      setLoading(false);
+    }
+  };
+
+  // ========================= Voice question: send audio =================
+  const sendAudio = async () => {
+    setLoading(true);
+    const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+    const formData = new FormData();
+    formData.append("audio", audioBlob, "voice.webm");
+
+    const isNewThread = !activeThread;
+    if (isNewThread) formData.append("pdf", file);
+    else formData.append("thread_id", activeThread.thread_id);
+
+    abortControllerRef.current = new AbortController();
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error("No auth token");
+
+      const url = isNewThread ? `${API_URL}/ask/audio` : `${API_URL}/follow_up/audio`;
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+        signal: abortControllerRef.current.signal,
+      });
+
+      if (!response.body) throw new Error("No response body");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      let botMessage = "";
+      let botMessageIndex = null;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+
+          let data;
+          try {
+            data = JSON.parse(line.replace(/^data:\s*/, ""));
+          } catch (err) {
+            console.error("SSE parse error:", line, err);
+            continue;
+          }
+
+          // Append transcribed user message
+          if (data.transcribed_text) {
+            onUpdateMessages((prev) => {
+              botMessageIndex = prev.length + 1; // next message will be bot
+              return [...prev, { role: "human", content: data.transcribed_text }, { role: "ai", content: "" }];
             });
+          }
 
+          // Stream AI tokens
+          if (data.token) {
+            botMessage += data.token;
+            onUpdateMessages((prev) => {
+              if (botMessageIndex === null) botMessageIndex = prev.length - 1;
+              const updated = [...prev];
+              updated[botMessageIndex] = { role: "ai", content: botMessage };
+              return updated;
+            });
+          }
 
-            if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
-            if (!response.body) throw new Error('No response body');
+          // Done
+          if (data.type === "done") setLoading(false);
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder('utf-8');
-            let buffer = '';
-            let botMessage = '';
-
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split("\n");
-                buffer = lines.pop() || '';
-
-                for (const line of lines) {
-                    const trimmedLine = line.trim();
-                    if (!trimmedLine.startsWith('data:')) continue;
-
-                    try {
-                        // Parse the JSON first
-                        const data = JSON.parse(trimmedLine.replace(/^data:\s*/, ''));
-
-                        // ✅ Check for 'done' after parsing
-                        if (data.type === 'done') {
-                            console.log("Streaming finished");
-                            setLoading(false); // stop loader
-                            break; // exit loop since streaming is complete
-                        }
-
-                        // ✅ Handle new thread creation (from /ask endpoint)
-                        if (data.type === 'thread_created' && data.thread_id) {
-                            console.log("New thread created:", data.thread_id);
-                            if (onNewThreadCreated) {
-                                onNewThreadCreated(data.thread_id);
-                            }
-                            continue; // skip to next line
-                        }
-
-                        if (data.token) {
-                            botMessage += data.token;
-                            onUpdateMessages(prev => {
-                                const updated = [...prev];
-                                updated[botMessageIndex] = { role: 'ai', content: botMessage };
-                                return updated;
-                            });
-                        } else if (data.type === 'error') {
-                            onUpdateMessages(prev => {
-                                const updated = [...prev];
-                                updated[botMessageIndex] = { role: 'ai', content: `Error: ${data.message}` };
-                                return updated;
-                            });
-                        }
-                    } catch (err) {
-                        console.error('Failed to parse SSE:', err);
-                    }
-                }
-
-            }
-
-            if (!botMessage) {
-                onUpdateMessages(prev => {
-                    const updated = [...prev];
-                    updated[botMessageIndex] = { role: 'ai', content: "No response received. Please try again." };
-                    return updated;
-                });
-            }
-        } catch (err) {
-            if (err.name !== 'AbortError') {
-                console.error('Chat error:', err);
-                onUpdateMessages(prev => {
-                    const updated = [...prev];
-                    if (updated[botMessageIndex]) {
-                        updated[botMessageIndex] = { role: 'ai', content: 'Something went wrong. Please try again.' };
-                    } else {
-                        updated.push({ role: 'ai', content: 'Something went wrong. Please try again.' });
-                    }
-                    return updated;
-                });
-            }
-        } finally {
-            setLoading(false);
-            abortControllerRef.current = null;
+          // New thread
+          if (data.type === "thread_created") onNewThreadCreated?.(data.thread_id);
         }
-    };
+      }
+    } catch (err) {
+      console.error(err);
+      setLoading(false);
+    } finally {
+      setRecording(false);
+      abortControllerRef.current = null;
+    }
+  };
 
-    const handleKeyDown = (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            handleSubmit();
-        }
-    };
+  // ============================== Audio Recording =======================
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      audioChunksRef.current = [];
 
-    return (
-        <div className="chat-container">
-            <div className="chat-main custom-scrollbar">
-                <div className="chat-inner">
-                    {messages.length === 0 ? (
-                        <div className="empty-state">
-                            <h1>How can I help you?</h1>
-                            <p>{file ? `"${file.name}" is ready. Ask me anything.` : "Upload a document to get started."}</p>
-                        </div>
+      mediaRecorderRef.current.ondataavailable = (e) => {
+        audioChunksRef.current.push(e.data);
+      };
 
-                    ) : (
+      mediaRecorderRef.current.onstop = sendAudio;
+      mediaRecorderRef.current.start();
+      setRecording(true);
+    } catch (err) {
+      console.error("Microphone error:", err);
+      alert("Microphone access denied");
+    }
+  };
 
-                        // Typing Indicator 
-                        <div className="flex flex-col">
-                            {messages.map((msg, idx) => (
-                                <motion.div
-                                    key={idx}
-                                    initial={{ opacity: 0, y: 10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    className={`message-bubble ${msg.role === 'human' ? 'user' : 'ai'}`}
-                                >
-                                    {msg.content ? (
-                                        <div className="message-content">
-                                            {msg.content}
-                                        </div>
-                                    ) : msg.role === 'ai' && idx === messages.length - 1 && loading ? (
-                                        <div className="typing-indicator">
-                                            <span className="typing-dot"></span>
-                                            <span className="typing-dot"></span>
-                                            <span className="typing-dot"></span>
-                                        </div>
-                                    ) : null}
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && recording) {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+      setRecording(false);
+    }
+  };
 
-                                </motion.div>
-                            ))}
-                        </div>
-
-
-
-
-                    )}
-                    <div ref={messagesEndRef} />
+  // ========================= Render Chat ================================
+  return (
+    <div className="chat-container">
+      <div className="chat-main">
+        {messages.map((msg, idx) => (
+          <motion.div
+            key={idx}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={`message-bubble ${msg.role === "human" ? "user" : "ai"}`}
+          >
+            <div className="message-content">
+              {msg.content || (loading && idx === messages.length - 1 && (
+                <div className="typing-indicator">
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
                 </div>
+              ))}
             </div>
+          </motion.div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
 
-            <div className="input-area">
-                <div className="input-wrapper">
-                    <textarea
-                        ref={textareaRef}
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder="Type your question..."
-                        rows={1}
-                        disabled={loading || (!activeThread && !file)}
-                        className="chat-textarea"
-                    />
-                    <button
-                        onClick={handleSubmit}
-                        disabled={loading || !input.trim() || (!activeThread && !file)}
-                        className="send-btn"
-                    >
-                        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                    </button>
-                </div>
-                <p className="text-center text-[10px] text-[#676767] mt-3">
-                    QanoonAI by Haseeb Manzoor
-                </p>
-            </div>
+      <div className="input-area">
+        <div className="input-wrapper">
+          <textarea
+            className="chat-textarea"
+            ref={textareaRef}
+            value={input}
+            placeholder="Type your question..."
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSubmit();
+              }
+            }}
+            disabled={loading || (!activeThread && !file)}
+          />
+
+          <div className="actions">
+            <button className="send-btn" onClick={handleSubmit} disabled={loading || !input.trim()}>
+              {loading ? <Loader2 className="animate-spin" /> : <Send />}
+            </button>
+
+            <button onClick={recording ? stopRecording : startRecording} disabled={loading}>
+              <Mic />
+            </button>
+          </div>
         </div>
-    );
+      </div>
+    </div>
+  );
 };
 
 export default ChatWindow;

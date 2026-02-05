@@ -33,7 +33,8 @@ async def ask_question(
         duration = end_time - start_time
         print(f"[Timer] /ask query took {duration:.2f} seconds")
 
-        supabase_client.table("threads").upsert({
+        await run_in_threadpool(
+            lambda:supabase_client.table("threads").upsert({
             "thread_id": thread_id,
             "doc_id": doc_id,
             "user_id":user.id, # add supbase user id for auth
@@ -41,14 +42,14 @@ async def ask_question(
                 {"role": "human", "content": question},
                 {"role": "ai", "content": answer}
             ]
-        }).execute()
+        }).execute())
 
     config = {"configurable": {"thread_id": thread_id}}
     graph = request.app.state.graph # we fetch the graph instance from app state
     
     # Pass thread_id so it gets sent to frontend in first SSE event
-    response = stream_graph(graph, state, config, on_complete, thread_id=thread_id)
-    return response
+    return await stream_graph(graph, state, config, on_complete, thread_id=thread_id)
+
 
 
 # User asks first question → /ask called
@@ -77,8 +78,8 @@ async def follow_up(
     # then we will fetch document info to get collection name
     # as our langgraph vectorstore is used collection name to fetch relevant chunks from vectorstore
     # this enusre that retriver fetches from correct document
-    response = (
-        supabase_client
+    response = await run_in_threadpool(
+        lambda: supabase_client
         .table("documents")
         .select("file_name")
         .eq("doc_id", doc_id)
@@ -127,17 +128,16 @@ async def follow_up(
         previous_messages.append({"role": "ai", "content": answer})
 
         # here we will use update insted of upsert as the thread already exist we just need to update the messages field
-        await run_in_threadpool(supabase_client.table("threads").update(
+        await run_in_threadpool(
+            lambda:supabase_client.table("threads").update(
             {"messages": previous_messages}
-        ).eq("thread_id", thread_id).execute()
-        )
+        ).eq("thread_id", thread_id).execute())
 
     config = {"configurable": {"thread_id": thread_id}}
 
     graph = request.app.state.graph  # we fetch the graph instance from app state
-    response = stream_graph(graph, state, config, on_complete)
-    return response
-
+    return await stream_graph(graph, state, config, on_complete)
+    
 
 
 

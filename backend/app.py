@@ -38,11 +38,12 @@ app.add_middleware(
 )
 
 
-from backend.routes import threads,chat,auth
+from backend.routes import threads,chat,auth,audio
 # Binds Router To the Fastapi object
 app.include_router(threads.router)
 app.include_router(chat.router)
 app.include_router(auth.router)
+app.include_router(audio.router)
 
 
 

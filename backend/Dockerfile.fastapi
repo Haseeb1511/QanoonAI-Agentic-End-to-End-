@@ -13,9 +13,12 @@ WORKDIR /app
 
 # Install system dependencies needed for psycopg2
 # aslo cryptography require rust
+# pydub require these two ==> ffmpeg (this installs both ffmpeg and ffprobe).
 RUN apt-get update && apt-get install -y \
     libpq-dev \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
+
 
 
 

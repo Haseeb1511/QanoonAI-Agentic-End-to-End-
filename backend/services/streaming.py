@@ -3,11 +3,17 @@ from fastapi.responses import StreamingResponse
 
 
 # ===================== Streaming Graph =====================
-def stream_graph(graph, state, config, on_complete=None, thread_id=None):
-
+async def stream_graph(graph, state, config, on_complete=None, thread_id=None,first_message=None):
+    """
+    first_message:it is for transcibed message audio endpoint only
+    """
     async def event_generator():
+
         tokens = []
 
+        if first_message:
+            yield f"data: {json.dumps({'transcribed_text': first_message})}\n\n"
+            
         # Send thread_id first if this is a new thread (from /ask endpoint)
         if thread_id:
             yield f"data: {json.dumps({'type': 'thread_created', 'thread_id': thread_id})}\n\n"
