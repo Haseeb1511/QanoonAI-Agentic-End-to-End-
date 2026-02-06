@@ -216,6 +216,7 @@ Standalone question:"""
         message_for_summary = state["messages"] + [HumanMessage(content=prompt)]
 
         response = self.llm.invoke(message_for_summary)
+        print("summary llm triggered")
 
         message_to_delete = state["messages"][:-2] if len(state["messages"]) > 2 else []
 
@@ -225,7 +226,6 @@ Standalone question:"""
         }
 
     def should_summzarizer(self, state: AgentState):
-        print("summarize node triggered")
         # Trigger summarization after 3 human turns.
         human_count = sum(1 for m in state.get("messages", []) if isinstance(m, HumanMessage))
         return human_count >= 3
@@ -260,8 +260,14 @@ Standalone question:"""
         response = self.llm.invoke(prompt_messages)
 
         token_usage = response.response_metadata.get("token_usage", {})
+        if not token_usage:
+            # Fallback: check usage_metadata (used with streaming)
+            token_usage = getattr(response, "usage_metadata", {}) or {}
+        
         total_tokens = token_usage.get("total_tokens", 0)
-
+        print(f"Response metadata: {response.response_metadata}")
+        print(f"Total tokens: {total_tokens}")
+        print("pushing tokens usage to supabase")
         supabase_client.table("usage").insert({
             "user_id": state["user_id"],
             "doc_id": state["doc_id"],
