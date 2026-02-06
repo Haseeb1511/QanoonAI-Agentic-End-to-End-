@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Send, Loader2, Mic } from "lucide-react";
+import { Send, Loader2, Mic, PanelLeft } from "lucide-react";
 import { motion } from "framer-motion";
 
 import "./ChatWindow.css";
@@ -12,7 +12,9 @@ const ChatWindow = ({
   messages,
   onUpdateMessages,      // callback from parent to update messages
   file,
-  onNewThreadCreated     // callback when a new thread is created
+  onNewThreadCreated,    // callback when a new thread is created
+  sidebarOpen = true,
+  onToggleSidebar,
 }) => {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -253,22 +255,33 @@ const ChatWindow = ({
 
 
   // ========================= Waveform animation =========================
-// Simple visual indicator so user KNOWS recording is active
-const Waveform = () => {
-  return (
-    <div className="waveform">
-      <span />
-      <span />
-      <span />
-      <span />
-    </div>
-  );
-};
+  // Simple visual indicator so user KNOWS recording is active
+  const Waveform = () => {
+    return (
+      <div className="waveform">
+        <span />
+        <span />
+        <span />
+        <span />
+      </div>
+    );
+  };
 
 
   // ========================= Render Chat ================================
   return (
     <div className="chat-container">
+      {/* Sidebar toggle button when sidebar is closed */}
+      {!sidebarOpen && (
+        <button
+          className="sidebar-open-btn"
+          onClick={onToggleSidebar}
+          title="Open sidebar"
+        >
+          <PanelLeft className="w-5 h-5" />
+        </button>
+      )}
+
       <div className="chat-main">
         {messages.map((msg, idx) => (
           <motion.div
@@ -308,33 +321,33 @@ const Waveform = () => {
             disabled={loading || (!activeThread && !file)}
           />
 
-           <div className="actions">
-          {/* Send button */}
-          <button
-            className="send-btn"
-            onClick={handleSubmit}
-            disabled={loading || !input.trim()}
-          >
-            {loading ? <Loader2 className="animate-spin" /> : <Send />}
-          </button>
+          <div className="actions">
+            {/* Send button */}
+            <button
+              className="send-btn"
+              onClick={handleSubmit}
+              disabled={loading || !input.trim()}
+            >
+              {loading ? <Loader2 className="animate-spin" /> : <Send />}
+            </button>
 
-          {/* Audio record button
+            {/* Audio record button
               - Shows Mic when idle
               - Shows animated waveform when recording
           */}
-          <button
-            className={`mic-btn ${recording ? "recording" : ""}`}
-            onClick={recording ? stopRecording : startRecording}
-            disabled={loading}
-          >
-            {recording ? <Waveform /> : <Mic />}
-          </button>
-        </div>
-
-
+            <button
+              className={`mic-btn ${recording ? "recording" : ""}`}
+              onClick={recording ? stopRecording : startRecording}
+              disabled={loading}
+            >
+              {recording ? <Waveform /> : <Mic />}
+            </button>
           </div>
+
+
         </div>
       </div>
+    </div>
   );
 };
 

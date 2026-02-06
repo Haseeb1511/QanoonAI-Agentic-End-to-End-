@@ -12,6 +12,7 @@ function ChatPage() {
   const [activeThread, setActiveThread] = useState(null);
   const [messages, setMessages] = useState([]);
   const [file, setFile] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
     const checkSession = async () => {
@@ -108,6 +109,8 @@ function ChatPage() {
         file={file}
         setFile={handleFileUpload}
         activeThread={activeThread}
+        isOpen={sidebarOpen}
+        onToggle={() => setSidebarOpen(!sidebarOpen)}
       />
 
       <ChatWindow
@@ -116,6 +119,8 @@ function ChatPage() {
         onUpdateMessages={setMessages}
         file={file}
         onNewThreadCreated={handleNewThreadCreated}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
       />
     </div>
   );

@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { MessageSquare, Plus, Upload, X, File, LogOut } from 'lucide-react';
+import { MessageSquare, Plus, Upload, X, File, LogOut, PanelLeftClose } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../supabaseClient';
@@ -14,6 +14,8 @@ const Sidebar = ({
     file,
     setFile,
     activeThread,
+    isOpen = true,
+    onToggle,
 }) => {
     const navigate = useNavigate();
     const [isDragging, setIsDragging] = useState(false);
@@ -53,10 +55,15 @@ const Sidebar = ({
     const showUploadSection = true;
 
     return (
-        <div className="sidebar">
+        <div className={`sidebar ${!isOpen ? 'sidebar-collapsed' : ''}`}>
             <div className="sidebar-inner">
-                <div className="flex items-center gap-3 mb-6 px-2">
-                    <img src={logo} alt="QanoonAI" className="sidebar-logo" />
+                <div className="sidebar-header">
+                    <div className="flex items-center gap-3 px-2">
+                        <img src={logo} alt="QanoonAI" className="sidebar-logo" />
+                    </div>
+                    <button onClick={onToggle} className="sidebar-toggle-btn" title="Close sidebar">
+                        <PanelLeftClose className="w-5 h-5" />
+                    </button>
                 </div>
 
                 <button onClick={onNewChat} className="new-chat-btn mb-6">
