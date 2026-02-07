@@ -98,6 +98,7 @@ async def ask_question(
     graph = request.app.state.graph # we fetch the graph instance from app state
     
     # Pass thread_id so it gets sent to frontend in first SSE event
+    # we can not store stream_graph in variable as it is streaming response 
     return await stream_graph(graph, state, config, on_complete, thread_id=thread_id)
 
 
