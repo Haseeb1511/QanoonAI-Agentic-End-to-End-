@@ -57,3 +57,23 @@ app.include_router(audio.router)
 
 # No response received. Please try again. ===>  This mean graph is None
 # NEVER IMPORT RUNTIME FORM APP.PY TO OTHER FILES AS IT WILL CREATE CIRCULAR IMPORT ISSUE
+
+
+
+# PORT CLEAR FOR FASTAPI IF STUCK
+# netstat -ano | findstr :8000
+# taskkill /PID 3552 /F
+
+
+
+
+
+
+
+
+
+
+
+
+
+

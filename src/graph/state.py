@@ -19,4 +19,5 @@ class AgentState(TypedDict,total=False):
     summary:str
     vectorstore_uploaded:bool
     rewritten_query:str
-    token_usage: int
+    # token_usage: int
+    token_usage: Dict[str, Any]

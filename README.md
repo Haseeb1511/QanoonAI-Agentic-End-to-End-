@@ -57,3 +57,24 @@ frontend  ---> vercel
 
 
 # Google OAuth 2.0 login + JWT-based authentication/authorization
+
+
+
+
+```bash
+
+User Q1 → Q2 → Q3 (3rd message triggers summarizer)
+                    ↓
+              Creates summary
+                    ↓
+              Saved to Supabase
+                    ↓
+User Q4 → Loads summary from DB
+              ↓
+        Query Rewriter uses summary
+              ↓
+        Agent Response uses summary
+              ↓
+        Summary extended (if messages ≥3 again)
+
+```

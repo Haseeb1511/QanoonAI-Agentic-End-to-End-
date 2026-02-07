@@ -14,10 +14,41 @@ import asyncio
 router = APIRouter()
 
 
+
+# ============================= Log token usage =============
+from tenacity import retry,stop_after_attempt,wait_exponential
+@retry(stop=stop_after_attempt(3),wait = wait_exponential(multiplier=1,min=2,max=10))
+async def log_token_usage(user_id:str,doc_id:str,thread_id:str,token_usage:dict):
+    """
+    Background task to log token usage to Supabase with retry logic.
+    """
+    print(f"BACKGROUND TASK STARTED ") 
+    try:
+        await run_in_threadpool(
+            lambda: supabase_client.table("usage").insert({
+                "user_id": user_id,
+                "doc_id": doc_id,
+                "thread_id": thread_id,
+                "total_tokens": token_usage["total_tokens"],
+                "prompt_tokens": token_usage["prompt_tokens"],
+                "completion_tokens": token_usage["completion_tokens"],
+                "query": token_usage["query"],
+                "answer": token_usage["answer"]
+            }).execute()
+        )
+    except Exception as e:
+        print(f"Failed to log token usage for thread {thread_id}: {e}")
+        raise
+
+
+
 #==================== Initial Question Endpoint =====================
+from fastapi import BackgroundTasks
+
 @router.post("/ask")
 async def ask_question(
     request: Request,
+    background_tasks:BackgroundTasks,
     pdf: UploadFile = File(...),
     question: str = Form(...),
     user=Depends(get_current_user)
@@ -50,6 +81,19 @@ async def ask_question(
         except asyncio.TimeoutError:
             print("Supbase timeout error while upserting thread data")
 
+        # schedule token usage logging in database in background task
+        token_usage = final_state.get("token_usage")
+        if token_usage:
+            background_tasks.add_task(
+                log_token_usage,
+                user.id,
+                doc_id,
+                thread_id,
+                token_usage
+            )
+            print("Tokens logged to supbase successfully")
+
+            
     config = {"configurable": {"thread_id": thread_id}}
     graph = request.app.state.graph # we fetch the graph instance from app state
     
@@ -74,6 +118,7 @@ async def ask_question(
 @router.post("/follow_up")
 async def follow_up(
     request: Request,
+    background_tasks: BackgroundTasks,
     thread_id: str = Form(...),
     question: str = Form(...),
     user=Depends(get_current_user)
@@ -133,7 +178,6 @@ async def follow_up(
 
         
         #UPDATE THREAD
-
         # first apppend the new ai message in state["messages"]
         state["messages"].append(AIMessage(content=answer))
         clean_messages = [
@@ -156,6 +200,19 @@ async def follow_up(
 
         except asyncio.TimeoutError:
             print("Supbase timeout error while updating thread data")
+
+
+        # Schedule token usage logging as background task
+        token_usage = final_state.get("token_usage")
+        if token_usage:
+            background_tasks.add_task(
+                log_token_usage,
+                user.id,
+                doc_id,
+                thread_id,
+                token_usage
+            )
+            print(f"token logged to supbase in follow up endpoint")
 
     config = {"configurable": {"thread_id": thread_id}}
 

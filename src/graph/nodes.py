@@ -6,91 +6,114 @@ from langchain_core.messages import (
 )
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+# from langchain_community.vectorstores.pgvector import PGVector
 from langchain_postgres import PGVector
 from tqdm import tqdm
-from langchain.messages import RemoveMessage
+from langchain.messages import RemoveMessage # to delete something from state permenantly
 from langchain_community.document_loaders import DirectoryLoader
 from sqlalchemy.pool import NullPool
+
+import asyncio
 
 # import from other custom modules
 from src.graph import state
 from src.prompts.rag_prompt import PROMPT_TEMPLATE
-from src.db_connection.connection import CONNECTION_STRING
+from src.db_connection.connection import CONNECTION_STRING 
 from src.utils.file_hash import get_file_hash
 from src.graph.state import AgentState
+from fastapi.concurrency import run_in_threadpool
 
-# SUPABASE CLIENT (SYNC)
+# SUPBAE CLIENT IS SYNCHRONOUS SO WE USE run_in_threadpool TO AVOID BLOCKING THE MAIN THREAD
 from src.db_connection.connection import supabase_client
 
+#for streaming token count 
+from langchain_community.callbacks import get_openai_callback
 
 class GraphNodes:
-    def __init__(self, embedding_model, llm, supbase_client):
+    def __init__(self,embedding_model,llm,supbase_client):
         self.embedding_model = embedding_model
         self.llm = llm
         self.supabase_client = supbase_client
-
-    def set_doc_id(self, state: AgentState):
+            
+    
+    
+    def set_doc_id(self,state:AgentState):
+        # Skip if doc_id already exists 
         if state.get("doc_id"):
             return state
-
+            
         path = os.path.abspath(state["documents_path"])
-
+        
         if not os.path.isfile(path):
             raise ValueError("Directoy uploaded not supported with hashing yet")
-
         state["doc_id"] = get_file_hash(path)
         return state
 
-    def check_pdf_already_uploaded(self, state: AgentState):
+
+    # as uspbase = network call  so we make async function to avoid blocking the main thread and also we can do other task while waiting for response from supbase
+    async def check_pdf_already_uploaded(self,state:AgentState):
+        """Checkif PDF already exist in SUpbase
+        Same PDF:    
+        - Different user
+        - Will embed again (correct behavior)
+        """
+        # first check if vectostore already exist
         if state.get("vectorstore_uploaded"):
             return state
-
-        response = (
-            self.supabase_client
-            .table("documents")
-            .select("doc_id")
-            .eq("doc_id", state["doc_id"])
-            .eq("user_id", state["user_id"])
-            .limit(1)
-            .execute()
+        # we check id documnet exist already or not and also check for user  if for sepcific user it exist or not (sometime one user might have already uploaded the same document )
+        
+        # as supbase client does not suppor async we use run in threadpool
+        # run_in_threadpool expects a callable (lambda), not the result of the call
+        response = await run_in_threadpool(
+            lambda: self.supabase_client.table("documents")
+                        .select("doc_id")
+                        .eq("doc_id", state["doc_id"])
+                        .eq("user_id", state["user_id"])
+                        .limit(1)
+                        .execute()
         )
-
         if response.data:
             print("Pdf already exist in supbase skipping documnet ingesion...")
             state["vectorstore_uploaded"] = True
         else:
             state["vectorstore_uploaded"] = False
+        return state  
 
-        return state
 
-    def document_ingestion(self, state: AgentState):
+
+    async def document_ingestion(self,state: AgentState):
+
         if state.get("vectorstore_uploaded"):
             print("Skipping vectoingestion - PDF already exist")
             state["vectorstore_uploaded"] = True
             return state
-
-        path = os.path.abspath(state["documents_path"])
+        
+        path = os.path.abspath(state["documents_path"])  # ensure absolute
 
         if not os.path.isfile(path):
             raise ValueError(f"Invalid documents_path: {path}")
+        
 
         loader = PyPDFLoader(path)
         documents = loader.load()
 
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000,chunk_overlap=200)
         chunks = splitter.split_documents(documents)
 
-        for i, chunk in enumerate(chunks):
-            source_path = chunk.metadata.get("source", "")
+        # langchain chunk metadata is first updated
+        # langchain chunk metadata (each chunk of document will have this metadata (it will not have page content - only metadata))
+        for i,chunk in enumerate(chunks):
+            source_path = chunk.metadata.get("source","")
             file_name = os.path.basename(source_path) if source_path else "unknow.pdf"
 
             metadata = {
-                "user_id": state["user_id"],
-                "doc_id": state["doc_id"],
-                "chunk_index": i,
-                "file_name": file_name,
-                "page": chunk.metadata.get("page")
+                "user_id":state["user_id"],
+                "doc_id":state["doc_id"],
+                "chunk_index":i,
+                "file_name":file_name,
+                "page":chunk.metadata.get("page")  
             }
+            # update langchian chunk metadata usd by pgvector
             chunk.metadata.update(metadata)
 
         vectorstore = PGVector(
@@ -98,113 +121,145 @@ class GraphNodes:
             collection_name=state["collection_name"],
             embeddings=self.embedding_model,
             use_jsonb=True,
-            engine_args={"poolclass": NullPool}
+            engine_args={"poolclass": NullPool}  # disable pooling
         )
-
-        batch_size = 50
+        batch_size=50
+        # upload embedding 
         for i in tqdm(range(0, len(chunks), batch_size), desc="Uploading chunks"):
             batch = chunks[i:i + batch_size]
-            vectorstore.add_documents(batch)
+            # async 
+            await run_in_threadpool(vectorstore.add_documents, batch)
+            # vectorstore.add_documents(batch)
+        
 
-        rows = [{
-            "user_id": state["user_id"],
-            "doc_id": state["doc_id"],
-            "chunk_index": i,
-            "file_name": chunk.metadata["file_name"],
-            "page": chunk.metadata.get("page"),
-            "content": chunk.page_content,
-        } for i, chunk in enumerate(chunks)]
-
+        # Insert metadata to supbase table
+        rows = [{   
+                "user_id":state["user_id"],
+                "doc_id": state["doc_id"],
+                "chunk_index": i,
+                "file_name": chunk.metadata["file_name"],
+                "page": chunk.metadata.get("page"),
+                "content": chunk.page_content,
+        } for i,chunk in enumerate(chunks)
+        ]
         if rows:
             try:
-                self.supabase_client.table("documents").insert(rows).execute()
+                await run_in_threadpool(
+                    lambda: self.supabase_client.table("documents").insert(rows).execute()
+                )
             except Exception:
                 print("Chunks already exist — skipping insert")
-
+    
         print(f"Uploaded {len(chunks)} chunks")
 
         state["vectorstore_uploaded"] = True
         return state
 
-    def query_rewriter(self, state: AgentState):
+
+
+
+    async def query_rewriter(self,state: AgentState):
+        """Rewrite follow-up questions to be standalone using conversation context"""
+        
         human_messages = [m for m in state.get("messages", []) if isinstance(m, HumanMessage)]
         current_query = human_messages[-1].content
-
+        
+        # If there's conversation history, rewrite the query
         if len(state.get("messages", [])) > 1:
+            
+            # Build conversation context
             memory_text = state.get("summary") or ""
             if not memory_text:
                 conversation_history = []
-                for m in state.get("messages", [])[:-1]:
+                for m in state.get("messages", [])[:-1]:  # Exclude current question
                     role = "User" if isinstance(m, HumanMessage) else "Assistant"
                     conversation_history.append(f"{role}: {m.content}")
                 memory_text = "\n".join(conversation_history)
-
+            
+            # Rewrite query to be standalone
             rewrite_prompt = f"""Given this conversation history:
-{memory_text}
+                {memory_text}
 
-Rewrite the following question to be standalone (include necessary context from history):
-Question: {current_query}
+                Rewrite the following question to be standalone (include necessary context from history):
+                Question: {current_query}
 
-Standalone question:"""
-
-            response = self.llm.invoke([HumanMessage(content=rewrite_prompt)])
+                Standalone question:"""
+            
+            response = await self.llm.ainvoke([HumanMessage(content=rewrite_prompt)])
             rewritten_query = response.content.strip()
-
+            
             print(f"Original: {current_query}")
             print(f"Rewritten: {rewritten_query}")
-
+            
+            
+            # Store rewritten query for retrieval
             state["rewritten_query"] = rewritten_query
+            print("Debugging(in state) Rewritten query for follow-up:", state.get("rewritten_query"))
         else:
             state["rewritten_query"] = current_query
-
+        
         return state
 
-    def retriever(self, state: AgentState):
+
+    # We can add Metadata filtering Here
+    async def retriever(self,state: AgentState):     
         vectorstore = PGVector(
             connection=CONNECTION_STRING,
             collection_name=state["collection_name"],
             embeddings=self.embedding_model,
             use_jsonb=True,
-            engine_args={"poolclass": NullPool}
+            engine_args={"poolclass": NullPool}  # disable pooling
         )
-
+        # Metadata filter for this specific PDF
         retriever = vectorstore.as_retriever(
             search_type="similarity",
             search_kwargs={
                 "k": 5,
-                "filter": {
-                    "doc_id": state["doc_id"],
-                    "user_id": state["user_id"]
-                }
+                "filter": {"doc_id": state["doc_id"],"user_id":state["user_id"] } # only search this pdf  and for this user
             }
         )
-
+        
+        # Use rewritten query instead of original
         query = state.get("rewritten_query", state["messages"][-1].content)
-        retrieved_docs = retriever.invoke(query)
+        
+        retrieved_docs = await run_in_threadpool(
+            retriever.invoke,query
+            )
 
         state["retrieved_docs"] = retrieved_docs
         return state
 
-    def context_builder(self, state: AgentState):
-        retrieved_docs = state.get("retrieved_docs", [])
 
-        if not retrieved_docs:
-            state["context"] = ""
-            state["answer"] = "I could not find relevant information in the provided document."
-        else:
-            context = "\n\n".join(
-                f"[Source: {doc.metadata.get('file_name', 'Unknown')} "
-                f"- Page {doc.metadata.get('page', 'N/A')}]\n"
-                f"{doc.page_content}"
-                for doc in retrieved_docs
-            )
-            state["context"] = context
+    # file_name is added during text splitting
+    # page exists → PyPDFLoader adds this automatically
+    # as it is in the middile of our graph which is async we have to make it async also
+    async def context_builder(self,state:AgentState):
+            retrieved_docs = state.get("retrieved_docs",[])
+            if not state["retrieved_docs"]:
+                state["context"] = ""
+                state["answer"] = ("I could not find relevant information in the provided document.")
+            else:
 
-        return state
+                context = "\n\n".join(
+                    f"[Source: {doc.metadata.get('file_name', 'Unknown')} "
+                    f"- Page {doc.metadata.get('page', 'N/A')}]\n"    # page no
+                    f"{doc.page_content}"
+                    for doc in retrieved_docs
+                )
+                state["context"] = context
+            
+            # Yield control back to event loop to avoid blocking
+            await asyncio.sleep(0)
+            return state
 
-    def summary_creation(self, state: AgentState):
-        existing_summary = state["summary"]
 
+
+    async def summary_creation(self,state:AgentState):
+        existing_summary = state["summary"] # we first load existing summary
+
+        # We have two scenrio:
+        # 1. We might already have summary
+        # 2. or We are Genrating summary fir the first time
         if existing_summary:
             prompt = (
                 f"Existing summary:\n{existing_summary}\n\n"
@@ -215,24 +270,36 @@ Standalone question:"""
 
         message_for_summary = state["messages"] + [HumanMessage(content=prompt)]
 
-        response = self.llm.invoke(message_for_summary)
-        print("summary llm triggered")
+        print("Callin summary LLM") # debugging
+        # generate summary
+        print("Calling summary LLM")
+        print(f"DEBUG: token_usage BEFORE summary: {state.get('token_usage')}")
+         
+        response = await self.llm.ainvoke(message_for_summary)
 
+        # now delete the orignal messages that have been summarized
         message_to_delete = state["messages"][:-2] if len(state["messages"]) > 2 else []
 
         return {
-            "summary": response.content,
-            "messages": [RemoveMessage(id=m.id) for m in message_to_delete]
+            "summary":response.content,
+            "messages":[RemoveMessage(id=m.id) for m in message_to_delete]
         }
 
-    def should_summzarizer(self, state: AgentState):
-        # Trigger summarization after 3 human turns.
-        human_count = sum(1 for m in state.get("messages", []) if isinstance(m, HumanMessage))
-        return human_count >= 3
 
-    def agent_response(self, state: AgentState):
+    def should_summzarizer(self,state:AgentState):
+        return len(state["messages"]) > 6
+
+
+
+    # cat node with memory
+    async def agent_response(self,state: AgentState):
+        """
+        Generates the LLM response for the current query, injecting memory (summary or previous messages)
+        and RAG context into the prompt.
+        """
         context = state.get("context", "")
 
+        # Get all human messages
         human_messages = [m for m in state.get("messages", []) if isinstance(m, HumanMessage)]
         if not human_messages:
             raise ValueError("No human message found in state for retrieval")
@@ -241,6 +308,8 @@ Standalone question:"""
 
         prompt_messages = []
 
+        # Memory injection 
+        # Use summary if it exists, otherwise include all previous messages
         memory_text = state.get("summary", "")
         if not memory_text:
             conversation_history = []
@@ -249,40 +318,154 @@ Standalone question:"""
                 conversation_history.append(f"{role}: {m.content}")
             memory_text = "\n".join(conversation_history) if conversation_history else "No previous conversation."
 
+        # Inject memory as system message
         prompt_messages.append(SystemMessage(content=f"Conversation Memory:\n{memory_text}"))
 
+        # RAG context + current query 
         formatted_prompt = PROMPT_TEMPLATE.format(
             context=context,
             question=query
         )
         prompt_messages.append(HumanMessage(content=formatted_prompt))
 
-        response = self.llm.invoke(prompt_messages)
+        print("Calling Agent Response LLM")  # debugging
 
-        token_usage = response.response_metadata.get("token_usage", {})
-        if not token_usage:
-            # Fallback: check usage_metadata (used with streaming)
-            token_usage = getattr(response, "usage_metadata", {}) or {}
+        # response = self.llm.invoke(prompt_messages)
+        with get_openai_callback() as cb:
+            response = await self.llm.ainvoke(prompt_messages)
+            print("Total tokens:", cb.total_tokens)   #Total tokens = question + answer (plus some extras)
+            print("Prompt tokens:", cb.prompt_tokens)  # user query + system prompt + conversation history ==> everything before the model starts answering
+            print("Completion tokens:", cb.completion_tokens)  # anser token generated by model(AI response)
+
+        # THIS WORK WHEN WE USE STREAMING
+        total_tokens = cb.total_tokens
+        prompt_tokens = cb.prompt_tokens
+        completion_tokens = cb.completion_tokens
+
+        #THIS WORK WITH OUT STREAMING BUT NOT WITH STREAMING
+        # token_usage = response.response_metadata.get("token_usage", {})
+        # total_tokens = token_usage.get("total_tokens", 0)
+        # print(f"Response metadata: {response.response_metadata}")
+        # print(f"Total tokens: {total_tokens}")
         
-        total_tokens = token_usage.get("total_tokens", 0)
-        print(f"Response metadata: {response.response_metadata}")
-        print(f"Total tokens: {total_tokens}")
-        print("pushing tokens usage to supabase")
-        supabase_client.table("usage").insert({
-            "user_id": state["user_id"],
-            "doc_id": state["doc_id"],
-            "tokens_used": total_tokens,
-            "query": state["messages"][-1].content,
-            "answer": response.content
-        }).execute()
+        # print("pushing tokens usage to supabase")
+        # await run_in_threadpool(
+        #     lambda: supabase_client.table("usage").insert({
+        #             "user_id": state["user_id"],
+        #             "doc_id": state["doc_id"],
+        #             "total_tokens": total_tokens,
+        #             "prompt_tokens":prompt_tokens,
+        #             "completion_tokens":completion_tokens,
+        #             "query": state["messages"][-1].content,
+        #             "answer": response.content
+        #             }).execute()
+        #     )
 
+        # store token in state 
+        state["token_usage"] = {
+            "total_tokens": cb.total_tokens,
+            "prompt_tokens": cb.prompt_tokens,
+            "completion_tokens": cb.completion_tokens,
+            "query": query,
+            "answer": response.content
+            }
+        # Save AI response in state
         state["messages"].append(AIMessage(content=response.content))
         state["answer"] = response.content
 
         return state
 
+
+
     def conditional(self, state: AgentState):
         if state.get("vectorstore_uploaded", False):
-            return "query_rewriter"
+            return "query_rewriter"   # already exists → query
         else:
-            return "document_ingestion"
+            return "document_ingestion"  # new → ingest
+
+
+
+
+
+
+# ASYNC HELP WHERN THIER ARE MULTIPLE USER SO IT DOES  NOT BLOCK THE SERVER WHICH CAUSE ISSUE FOR OTHER USER
+
+#ASYNC CONDTIONS:(library must support async if not then use sync)
+# You make a function async when it waits.
+# Not when it’s “slow”.
+# Not when it “feels important”.
+# When it waits for something outside your Python process.
+    
+# When you SHOULD use async
+# Network calls (always async)
+
+#1️⃣ Anything that:
+# Talks to the internet
+# Talks to another service
+# Calls an API
+
+# Examples (your code):
+# OpenAI (llm.invoke → llm.ainvoke)
+# Supabase queries
+# OAuth / JWT verification
+# Webhooks
+# External HTTP APIs
+
+# 🧠 Reason:
+# While waiting, Python can serve other users.
+
+
+# 2️⃣ DATABASE CALL USALLY ASYNC
+
+
+#3️⃣ Waiting on something (timeouts, retries, backoff)
+
+
+
+# ===> When you should NOT use asyn
+# CPU-bound work (keep sync)
+# PDF parsing
+# Text splitting
+# Hashing files
+# Regex
+# JSON manipulation
+# Prompt formatting
+
+
+
+
+
+
+# NullPool means no connection reuse. With 100 concurrent users,
+# you'd create 100+ simultaneous database connections.
+
+
+
+# from sqlalchemy import create_engine
+# from sqlalchemy.pool import QueuePool
+
+# # Create a shared engine with connection pooling
+# shared_engine = create_engine(
+#     CONNECTION_STRING,
+#     poolclass=QueuePool,
+#     pool_size=10,          # Max connections to keep open
+#     max_overflow=20,       # Additional connections when pool is full
+#     pool_pre_ping=True,    # Verify connections before using
+#     pool_recycle=3600      # Recycle connections after 1 hour
+# )
+
+# # Then in nodes.py - retriever method
+# async def retriever(self, state: AgentState):     
+#     vectorstore = PGVector(
+#         connection=CONNECTION_STRING,
+#         collection_name=state["collection_name"],
+#         embeddings=self.embedding_model,
+#         use_jsonb=True,
+#         create_engine_kwargs={
+#             "poolclass": QueuePool,
+#             "pool_size": 10,
+#             "max_overflow": 20,
+#             "pool_pre_ping": True
+#         }
+#     )
+  

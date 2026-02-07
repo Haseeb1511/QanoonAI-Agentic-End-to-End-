@@ -28,17 +28,50 @@ async def stream_graph(graph, state, config, on_complete=None, thread_id=None,fi
 
         print("Token streaming started...")
 
+
+        # IMPORTANT INFORMATION
+        # WHEN WE USE LANGGRAPHH WITH STREAMING WE FACE A ISSUE
+        ## WE only get STREAMING CHUNKS, not the final state
+        # THEN How do WE access token_usage??
+        # WITHOUT the capture code:
+        # graph.astream_events() yields:
+        #   ├─ on_chain_start (node: agent_response)
+        #   ├─ on_chat_model_stream (token: "The")      ← You capture these for UI
+        #   ├─ on_chat_model_stream (token: " penalty")  ← You capture these for UI
+        #   ├─ on_chat_model_stream (token: " is...")    ← You capture these for UI
+        #   └─ on_chain_end (node: agent_response)       ← THIS has our token_usage!
+        #      └─ output: {token_usage: {...}, answer: "...", messages: [...]}
+        # The on_chain_end event contains the complete output from our node, including all the state updates like token_usage and summary.
+        # EXAMPLE:
+        #    kitchen events:
+        # - on_chain_start: "Started cooking"
+        # - on_stream: "Smell of cooking burger..."  ← Customer experiences this
+        # - on_chain_end: "Burger ready!"
+        #     └─ output: {
+        #         burger: "🍔",
+        #         cost: "$10",           ← You need this for billing!
+        #         calories: 500
+        #     }
         try:
             async for event in graph.astream_events(state, config=config, version="v2"):
                 # the node from which we want streaming
                 node = event.get("metadata", {}).get("langgraph_node")
                 
+
+                # Capture token_usage from agent_response node
+                if event["event"] == "on_chain_end" and node == "agent_response":
+                    output = event.get("data", {}).get("output", {})
+                    if isinstance(output, dict):
+                        if "token_usage" in output:
+                            final_state["token_usage"] = output["token_usage"]
+
+
                 # Capture state updates from summarize node
                 if event["event"] == "on_chain_end" and node == "summarize":
                     output = event.get("data", {}).get("output", {})
                     if isinstance(output, dict) and "summary" in output:
                         final_state["summary"] = output["summary"]
-                        print(f"Captured summary from summarize node: {output['summary'][:100]}...")
+                        # print(f"Captured summary from summarize node: {output['summary'][:100]}...")
                 
                 # workflow.add_node("agent_response", nodes.agent_response) ==> as we have this node we check that we only stream from this node(agent)
                 # Streaming started here (we have to close it also)
@@ -51,11 +84,6 @@ async def stream_graph(graph, state, config, on_complete=None, thread_id=None,fi
                         tokens.append(chunk.content) # we also append token in list as to persist the wole content is databse as otherwise we are genrating token by token so it will save incorrectly in database
                         yield f"data: {json.dumps({'token': chunk.content})}\n\n"
                         await asyncio.sleep(0)
-                # if (
-                #     event["event"] == "on_chat_model_end"
-                #     and node == "agent_response"):
-                #     print("Received on_chat_model_end for agent_response node ending token stream.")
-                #     break
                         
         except Exception as e:
             yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
@@ -64,6 +92,7 @@ async def stream_graph(graph, state, config, on_complete=None, thread_id=None,fi
         print("Token streaming finished.")
 
         final_answer = "".join(tokens)  # join all the tokens in single string
+
 
         # do this after the entier streaming is finshed(here when all token are streamed and final_answer is joined then we store the the content in the database)
         if on_complete:
@@ -102,6 +131,7 @@ async def stream_graph(graph, state, config, on_complete=None, thread_id=None,fi
 #     if event["event"] == "on_chat_model_stream":
 
 
+# ON_CHAT_MODEL_STREAM EVENT (OUTPUT IS LIKE THIS)
 # event = {
 #   "event": "on_chat_model_stream",
 #   "name": "ChatOpenAI",
@@ -111,6 +141,28 @@ async def stream_graph(graph, state, config, on_complete=None, thread_id=None,fi
 #   "tags": ["llm"],
 #   "metadata": {...}
 # }
+
+
+# ON_CHAI_MODEL STREAM EVENT(THE OUTPUT IS LIKE THIS)
+# event = {
+#     "event": "on_chain_end",
+#     "name": "agent_response",
+#     "data": {
+#         "output": {  # ← "output" key for final results
+#             "token_usage": {...},
+#             "answer": "The penalty is...",
+#             "messages": [...]
+#         }
+#     },
+#     "metadata": {
+#         "langgraph_node": "agent_response"
+#     }
+# }
+
+# # Access it like this:
+# output = event.get("data", {}).get("output", {})  
+# token_usage = output.get("token_usage")
+
 
 # langgraph has many kind of event
 # Event name	   ===> Meaning
