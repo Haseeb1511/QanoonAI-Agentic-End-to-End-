@@ -9,14 +9,15 @@ router = APIRouter()
 
 async def load_thread_messages(thread_id: str,user_id:str):
     response = (
-        supabase_client
+        await run_in_threadpool(
+        lambda:supabase_client
         .table("threads")
         .select("messages, doc_id,summary")
         .eq("thread_id", thread_id)
         .eq("user_id",user_id)   # filter by login user id
         .single()
         .execute()
-    )
+    ))
     if not response.data:
         raise HTTPException(status_code=404, detail="Thread not found")
 
@@ -31,12 +32,13 @@ async def get_all_threads(user=Depends(get_current_user)):
     """Get all threads with previews"""
     try:
         response = (
-            supabase_client
+            await run_in_threadpool(
+            lambda:supabase_client
             .table("threads")
             .select("thread_id, doc_id, messages")
             .eq("user_id",user.id)  # filter by login user
             .execute()
-        )
+        ))
         
         threads = []
         if response.data:
@@ -71,3 +73,40 @@ async def get_threads(thread_id: str,user=Depends(get_current_user)):
         "doc_id": doc_id,
         "messages": messages
     }
+
+
+
+# =========================== Endpoint to fetch token usage for a user from Database ===============================
+
+from fastapi.concurrency import run_in_threadpool
+
+@router.get("/user/tokens")
+async def get_user_total_token_usage(user=Depends(get_current_user)):
+    """
+    Fetch TOTAL token usage across ALL threads for the current user.
+    """
+    try:
+        response = await run_in_threadpool(
+            lambda: supabase_client
+            .table("usage")
+            .select("total_tokens, prompt_tokens, completion_tokens")
+            .eq("user_id", user.id)
+            .execute()
+        )
+
+        if not response.data:
+            return {"total_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0}
+
+        # Sum all usage entries for this user across all threads
+        total_tokens = sum(row.get("total_tokens", 0) or 0 for row in response.data)
+        prompt_tokens = sum(row.get("prompt_tokens", 0) or 0 for row in response.data)
+        completion_tokens = sum(row.get("completion_tokens", 0) or 0 for row in response.data)
+
+        return {
+            "total_tokens": total_tokens,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch user token usage: {str(e)}")

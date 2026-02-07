@@ -13,6 +13,7 @@ function ChatPage() {
   const [messages, setMessages] = useState([]);
   const [file, setFile] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [userTotalTokens, setUserTotalTokens] = useState(0);  // Total tokens across ALL threads
 
   useEffect(() => {
     const checkSession = async () => {
@@ -38,41 +39,97 @@ function ChatPage() {
         data = [];
       }
 
+      // Token usage is fetched on-demand when a thread is selected (in handleSelectThread)
+      // This avoids making N API calls on every page load
       setThreads(data);
+
+      // Auto-select last active thread from localStorage if available
+      const lastThreadId = localStorage.getItem('lastActiveThreadId');
+      if (lastThreadId && data.length > 0) {
+        const lastThread = data.find(t => t.thread_id === lastThreadId);
+        if (lastThread) {
+          // Trigger handleSelectThread to load messages and token usage
+          handleSelectThread(lastThread);
+        }
+      }
     } catch (error) {
       console.error("Failed to load threads:", error);
       setThreads([]); // fallback to empty array
     }
   };
 
+
+
+  // Helper to fetch TOTAL token usage for the user (across all threads)
+  const fetchUserTotalTokens = async () => {
+    try {
+      const res = await api.getUserTotalTokenUsage();
+      return res?.total_tokens || 0;
+    } catch (err) {
+      console.error("Failed to fetch user token usage:", err);
+      return 0;
+    }
+  };
+
+
   const handleSelectThread = async (thread) => {
     setActiveThread(thread);
     setMessages([]);
+    setFile(null);
 
+    // Persist active thread ID to localStorage for refresh persistence
+    if (thread?.thread_id) {
+      localStorage.setItem('lastActiveThreadId', thread.thread_id);
+    }
+
+    // then fetch thread messages as before
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
 
       const data = await api.getThread(thread.thread_id, token);
+      setMessages(Array.isArray(data?.messages) ? data.messages : []);
 
-      // ⚠️ Ensure messages is always an array
-      if (!Array.isArray(data?.messages)) {
-        setMessages([]);
-      } else {
-        setMessages(data.messages);
+      // backend may include token_usage in the get_threads response
+      if (data?.token_usage !== undefined) {
+        setActiveThread(prev => ({
+          ...prev,
+          tokenUsage: data.token_usage,
+          promptTokens: data.prompt_tokens ?? prev?.promptTokens,
+          completionTokens: data.completion_tokens ?? prev?.completionTokens
+        }));
       }
     } catch (error) {
       console.error("Failed to load thread details:", error);
       setMessages([]);
     }
-
-    setFile(null);
   };
+
+
+  // Fetch user total tokens on mount and poll every 5 seconds
+  useEffect(() => {
+    let mounted = true;
+    const poll = async () => {
+      const total = await fetchUserTotalTokens();
+      if (!mounted) return;
+      setUserTotalTokens(prev => (prev === total ? prev : total));
+    };
+
+    // Initial fetch
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => { mounted = false; clearInterval(id); };
+  }, []);
+
+
+
 
   const handleNewChat = () => {
     setActiveThread(null);
     setMessages([]);
     setFile(null);
+    // Clear persisted thread ID when starting new chat
+    localStorage.removeItem('lastActiveThreadId');
   };
 
   const handleFileUpload = (newFile) => {
@@ -108,7 +165,7 @@ function ChatPage() {
         onNewChat={handleNewChat}
         file={file}
         setFile={handleFileUpload}
-        activeThread={activeThread}
+        userTotalTokens={userTotalTokens}
         isOpen={sidebarOpen}
         onToggle={() => setSidebarOpen(!sidebarOpen)}
       />
@@ -119,6 +176,11 @@ function ChatPage() {
         onUpdateMessages={setMessages}
         file={file}
         onNewThreadCreated={handleNewThreadCreated}
+        onStreamDone={async () => {
+          // Refresh user total token usage after streaming completes
+          const total = await fetchUserTotalTokens();
+          setUserTotalTokens(total);
+        }}
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
       />

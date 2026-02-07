@@ -13,6 +13,7 @@ const ChatWindow = ({
   onUpdateMessages,      // callback from parent to update messages
   file,
   onNewThreadCreated,    // callback when a new thread is created
+  onStreamDone,          // callback after streaming completes to refresh token usage
   sidebarOpen = true,
   onToggleSidebar,
 }) => {
@@ -26,6 +27,8 @@ const ChatWindow = ({
   const abortControllerRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+
+
 
   // ========================= Auto-scroll messages =========================
   useEffect(() => {
@@ -74,6 +77,8 @@ const ChatWindow = ({
         // Done event
         if (data.type === "done") {
           setLoading(false);
+          // notify parent that streaming completed so it can refresh tokens/threads
+          onStreamDone?.();
           return;
         }
 
@@ -84,6 +89,13 @@ const ChatWindow = ({
       }
     }
   };
+
+
+
+  // Token usage polling moved to App-level (App.jsx) to avoid duplicate/upstream state issues.
+
+
+
 
   // ========================= Submit text question =======================
   const handleSubmit = async (e) => {
@@ -210,7 +222,10 @@ const ChatWindow = ({
           }
 
           // Done
-          if (data.type === "done") setLoading(false);
+          if (data.type === "done") {
+            setLoading(false);
+            onStreamDone?.();  // refresh token usage after audio response
+          }
 
           // New thread
           if (data.type === "thread_created") onNewThreadCreated?.(data.thread_id);

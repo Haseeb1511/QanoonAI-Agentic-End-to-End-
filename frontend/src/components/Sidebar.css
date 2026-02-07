@@ -64,6 +64,17 @@
     border-right: none;
 }
 
+/* token usage bar */
+.token-usage-container {
+    text-align: center;
+    padding: 8px 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    border-top: 1px solid var(--border-color);
+}
+
+
+
 /* New Chat button */
 .new-chat-btn {
     width: 100%;

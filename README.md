@@ -60,7 +60,7 @@ frontend  ---> vercel
 
 
 
-
+# How summary Generation work
 ```bash
 
 User Q1 → Q2 → Q3 (3rd message triggers summarizer)
