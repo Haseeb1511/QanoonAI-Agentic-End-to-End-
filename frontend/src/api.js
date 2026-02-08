@@ -62,4 +62,24 @@ export const api = {
     const response = await axiosInstance.get('/user/tokens');
     return response.data;
   },
+
+  // 🔹 Get user settings (email, custom prompt)
+  getSettings: async () => {
+    const response = await axiosInstance.get('/settings');
+    return response.data;
+  },
+
+  // 🔹 Save custom prompt
+  savePrompt: async (customPrompt) => {
+    const response = await axiosInstance.post('/settings/prompt', {
+      custom_prompt: customPrompt
+    });
+    return response.data;
+  },
+
+  // 🔹 Reset prompt to default
+  resetPrompt: async () => {
+    const response = await axiosInstance.delete('/settings/prompt');
+    return response.data;
+  },
 };

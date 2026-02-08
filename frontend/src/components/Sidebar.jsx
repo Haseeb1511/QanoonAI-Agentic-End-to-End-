@@ -1,11 +1,12 @@
 import React, { useState, useRef } from 'react';
 import {
-    MessageSquare, Plus, Upload, X, File, LogOut, PanelLeftClose
+    MessageSquare, Plus, Upload, X, File, LogOut, PanelLeftClose, Settings as SettingsIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../supabaseClient';
 import logo from '../assets/gov_logo.png';
+import Settings from './Settings';
 import './Sidebar.css';
 
 const Sidebar = ({
@@ -21,6 +22,7 @@ const Sidebar = ({
 }) => {
     const navigate = useNavigate();
     const [isDragging, setIsDragging] = useState(false);  // For drag-drop PDF
+    const [showSettings, setShowSettings] = useState(false); // Settings modal
     const fileInputRef = useRef(null);                   // File input reference
 
     // ----------------- Logout Handler -----------------
@@ -163,11 +165,20 @@ const Sidebar = ({
                 </div>
 
 
-                {/* ----------------- Logout Button ----------------- */}
-                <button onClick={handleLogout} className="logout-btn">
-                    <LogOut className="w-4 h-4" />
-                    <span>Sign Out</span>
-                </button>
+                {/* ----------------- Settings & Logout Buttons ----------------- */}
+                <div className="sidebar-footer-buttons">
+                    <button onClick={() => setShowSettings(true)} className="settings-btn">
+                        <SettingsIcon className="w-4 h-4" />
+                        <span>Settings</span>
+                    </button>
+                    <button onClick={handleLogout} className="logout-btn">
+                        <LogOut className="w-4 h-4" />
+                        <span>Sign Out</span>
+                    </button>
+                </div>
+
+                {/* Settings Modal */}
+                <Settings isOpen={showSettings} onClose={() => setShowSettings(false)} />
             </div>
         </div>
     );

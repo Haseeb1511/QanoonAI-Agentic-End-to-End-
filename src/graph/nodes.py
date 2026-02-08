@@ -17,7 +17,7 @@ import asyncio
 
 # import from other custom modules
 from src.graph import state
-from src.prompts.rag_prompt import PROMPT_TEMPLATE
+from src.prompts.rag_prompt import get_prompt_template, DEFAULT_PROMPT_TEMPLATE
 from src.db_connection.connection import CONNECTION_STRING 
 from src.utils.file_hash import get_file_hash
 from src.graph.state import AgentState
@@ -37,11 +37,24 @@ from langchain_community.callbacks import get_openai_callback
 def rrf_merge(bm25_docs, dense_docs, k=60, top_n=5):
     """
     Reciprocal Rank Fusion to merge BM25 and dense retrieval results.
-    Uses page_content as unique identifier since LangChain Documents don't have IDs.
-    Returns the actual Document objects, not just IDs.
-    Dense retrieval gets 2x weight since semantic matching is more accurate for legal queries.
+
+    How it works
+    Higher-ranked docs get more score
+    Lower-ranked docs still contribute (but less)
+    No need to normalize scores across retrievers
+    Robust when rankings disagree
+
+    RRF operates on IDs
+    LangChain Document has no built-in ID
+    So we fake one using content
+
+    Parameters:
+    bm25_docs → list of Documents from BM25 retriever
+    dense_docs → list of Documents from dense (vector) retriever
+    k → RRF smoothing constant (standard value is ~60)
+    top_n → how many final documents to return
     """
-    scores = {}
+    scores = {}  # Stores the combined RRF score per document
     doc_map = {}  # Map content hash to document for retrieval
 
     # BM25 results with standard weight (1x)
@@ -86,6 +99,7 @@ class GraphNodes:
             raise ValueError("Directoy uploaded not supported with hashing yet")
         state["doc_id"] = get_file_hash(path)
         return state
+
 
 
     # as uspbase = network call  so we make async function to avoid blocking the main thread and also we can do other task while waiting for response from supbase
@@ -143,7 +157,6 @@ class GraphNodes:
         for i,chunk in enumerate(chunks):
             source_path = chunk.metadata.get("source","")
             file_name = os.path.basename(source_path) if source_path else "unknow.pdf"
-
             metadata = {
                 "user_id":state["user_id"],
                 "doc_id":state["doc_id"],
@@ -204,9 +217,9 @@ class GraphNodes:
         
         # If there's conversation history, rewrite the query
         if len(state.get("messages", [])) > 1:
-            
-            # Build conversation context
+            #if thier is summary we will use it as text for creating contextual aware query
             memory_text = state.get("summary") or ""
+            # else we will use past conversation for creating contextual aware query
             if not memory_text:
                 conversation_history = []
                 for m in state.get("messages", [])[:-1]:  # Exclude current question
@@ -232,11 +245,10 @@ class GraphNodes:
             
             # Store rewritten query for retrieval
             state["rewritten_query"] = rewritten_query
-            print("Debugging(in state) Rewritten query for follow-up:", state.get("rewritten_query"))
         else:
             state["rewritten_query"] = current_query
-        
         return state
+
 
 
     # Hybrid Retrieval: BM25 (keyword) + Dense (semantic) using EnsembleRetriever
@@ -250,7 +262,7 @@ class GraphNodes:
             .eq("user_id", state["user_id"])
             .execute()
         )
-        
+        # if thier is no response then we will empty the retrived docs in state
         if not response.data:
             state["retrieved_docs"] = []
             return state
@@ -309,12 +321,13 @@ class GraphNodes:
     # page exists → PyPDFLoader adds this automatically
     # as it is in the middile of our graph which is async we have to make it async also
     async def context_builder(self,state:AgentState):
+        # we get retrived docs from the state
             retrieved_docs = state.get("retrieved_docs",[])
+            # fall back if thier is no retrived docs
             if not state["retrieved_docs"]:
                 state["context"] = ""
                 state["answer"] = ("I could not find relevant information in the provided document.")
             else:
-
                 context = "\n\n".join(
                     f"[Source: {doc.metadata.get('file_name', 'Unknown')} "
                     f"- Page {doc.metadata.get('page', 'N/A')}]\n"    # page no
@@ -393,8 +406,14 @@ class GraphNodes:
         # Inject memory as system message
         prompt_messages.append(SystemMessage(content=f"Conversation Memory:\n{memory_text}"))
 
-        # RAG context + current query 
-        formatted_prompt = PROMPT_TEMPLATE.format(
+        # Chossing the System Prompt Template
+        custom_prompt = state.get("custom_prompt")
+        if custom_prompt:
+            prompt_template = get_prompt_template(custom_prompt)
+        else:
+            prompt_template = DEFAULT_PROMPT_TEMPLATE
+        
+        formatted_prompt = prompt_template.format(
             context=context,
             question=query
         )
@@ -402,7 +421,7 @@ class GraphNodes:
 
         print("Calling Agent Response LLM")  # debugging
 
-        # response = self.llm.invoke(prompt_messages)
+        # we are using call back for llm response becaue without callback llm will not retrun token usage as we str using Streaming which cause issue with token usage 
         with get_openai_callback() as cb:
             response = await self.llm.ainvoke(prompt_messages)
             print("Total tokens:", cb.total_tokens)   #Total tokens = question + answer (plus some extras)
@@ -444,7 +463,6 @@ class GraphNodes:
         # Save AI response in state
         state["messages"].append(AIMessage(content=response.content))
         state["answer"] = response.content
-
         return state
 
 

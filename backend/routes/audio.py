@@ -15,44 +15,18 @@ import os
 import tempfile
 import asyncio
 import json
-
-router = APIRouter()
-
 from backend.services.token_limit import check_token_limit
 
 # audio files
 from src.audio.voice import text_to_speech, text_to_speech_bytes
 from src.audio.transcription import AudioToText
 
+from backend.services.log_token_usage import log_token_usage
+
+
+router = APIRouter()
+
 audio_to_text = AudioToText()
-
-
-
-
-# ============================= Log token usage =============
-from tenacity import retry,stop_after_attempt,wait_exponential
-@retry(stop=stop_after_attempt(3),wait = wait_exponential(multiplier=1,min=2,max=10))
-async def log_token_usage(user_id:str,doc_id:str,thread_id:str,token_usage:dict):
-    """
-    Background task to log token usage to Supabase with retry logic.
-    """
-    print(f"BACKGROUND TASK STARTED ") 
-    try:
-        await run_in_threadpool(
-            lambda: supabase_client.table("usage").insert({
-                "user_id": user_id,
-                "doc_id": doc_id,
-                "thread_id": thread_id,
-                "total_tokens": token_usage["total_tokens"],
-                "prompt_tokens": token_usage["prompt_tokens"],
-                "completion_tokens": token_usage["completion_tokens"],
-                "query": token_usage["query"],
-                "answer": token_usage["answer"]
-            }).execute()
-        )
-    except Exception as e:
-        print(f"Failed to log token usage for thread {thread_id}: {e}")
-        raise
 
 
 # ========================= Transcribe audio file funciotn ================

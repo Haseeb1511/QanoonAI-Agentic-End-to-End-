@@ -12,36 +12,9 @@ from fastapi.concurrency import run_in_threadpool
 import time
 import asyncio
 from backend.services.token_limit import check_token_limit
+from backend.services.log_token_usage import log_token_usage
+
 router = APIRouter()
-
-
-# ============================= Log token usage =============
-from tenacity import retry,stop_after_attempt,wait_exponential
-@retry(stop=stop_after_attempt(3),wait = wait_exponential(multiplier=1,min=2,max=10))
-async def log_token_usage(user_id:str,doc_id:str,thread_id:str,token_usage:dict):
-    """
-    Background task to log token usage to Supabase with retry logic.
-    """
-    print(f"BACKGROUND TASK STARTED ") 
-    try:
-        await run_in_threadpool(
-            lambda: supabase_client.table("usage").insert({
-                "user_id": user_id,
-                "doc_id": doc_id,
-                "thread_id": thread_id,
-                "total_tokens": token_usage["total_tokens"],
-                "prompt_tokens": token_usage["prompt_tokens"],
-                "completion_tokens": token_usage["completion_tokens"],
-                "query": token_usage["query"],
-                "answer": token_usage["answer"]
-            }).execute()
-        )
-    except Exception as e:
-        print(f"Failed to log token usage for thread {thread_id}: {e}")
-        raise
-
-
-
 
 
 #==================== Initial Question Endpoint =====================
@@ -172,6 +145,21 @@ async def follow_up(
     # we will append the new quesion in th messages list
     messages.append(HumanMessage(content=question))
 
+    # Fetch custom prompt for this user
+    custom_prompt = None
+    try:
+        settings_response = await run_in_threadpool(
+            lambda: supabase_client.table("user_settings")
+                .select("custom_prompt")
+                .eq("user_id", str(user.id))
+                .limit(1)
+                .execute()
+        )
+        if settings_response.data and len(settings_response.data) > 0:
+            custom_prompt = settings_response.data[0].get("custom_prompt")
+    except Exception:
+        pass  # Use default prompt if fetch fails
+
     # now we will pass the state to the graph
     state = {
         "user_id": user.id,   # unique user id from supbase
@@ -179,8 +167,8 @@ async def follow_up(
         "collection_name": collection_name,  # which vectorstore collection to use,
         "summary": summary or " ", # previous summary of the document if exist
         "messages": messages, # list of all previous messages + new question(to provide context to the model)
-        "vectorstore_uploaded": True # PDF already ingested, skip document ingestion
-
+        "vectorstore_uploaded": True, # PDF already ingested, skip document ingestion
+        "custom_prompt": custom_prompt  # User's custom prompt (None = use default)
     }
     start_time = time.time()  # start timer before streaming
 
@@ -204,7 +192,8 @@ async def follow_up(
         try:
             
             await run_in_threadpool(
-                lambda:supabase_client.table("threads")
+                lambda:supabase_client
+                .table("threads")
                 .update({
                 "messages": clean_messages,
                 "summary": final_state.get("summary", state.get("summary", ""))
