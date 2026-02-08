@@ -147,6 +147,32 @@
     border-color: var(--text-secondary);
 }
 
+/* Add PDF to Thread button */
+.dropzone.add-pdf-btn {
+    border-color: #4ade80;
+    background-color: rgba(74, 222, 128, 0.05);
+}
+
+.dropzone.add-pdf-btn:hover {
+    background-color: rgba(74, 222, 128, 0.1);
+    border-color: #22c55e;
+}
+
+.dropzone.add-pdf-btn.uploading {
+    cursor: wait;
+    opacity: 0.7;
+}
+
+/* Spin animation for loader */
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.animate-spin {
+    animation: spin 1s linear infinite;
+}
+
 /* File info display */
 .file-info {
     background-color: var(--bg-hover);

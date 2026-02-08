@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import {
-    MessageSquare, Plus, Upload, X, File, LogOut, PanelLeftClose, Settings as SettingsIcon
+    MessageSquare, Plus, Upload, X, File, LogOut, PanelLeftClose, Settings as SettingsIcon, Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
@@ -8,6 +8,8 @@ import { supabase } from '../../supabaseClient';
 import logo from '../assets/gov_logo.png';
 import Settings from './Settings';
 import './Sidebar.css';
+
+const API_URL = import.meta.env.VITE_BACKEND_URL;
 
 const Sidebar = ({
     threads = [],               // List of chat threads
@@ -19,11 +21,14 @@ const Sidebar = ({
     userTotalTokens = 0,        // Total token usage across all threads for user
     isOpen = true,              // Sidebar open/collapsed state
     onToggle,                   // Toggle sidebar visibility
+    onPdfAdded,                 // Callback when PDF is added to thread
 }) => {
     const navigate = useNavigate();
     const [isDragging, setIsDragging] = useState(false);  // For drag-drop PDF
     const [showSettings, setShowSettings] = useState(false); // Settings modal
+    const [isUploading, setIsUploading] = useState(false); // Add PDF loading state
     const fileInputRef = useRef(null);                   // File input reference
+    const addPdfInputRef = useRef(null);                 // Add PDF to thread input
 
     // ----------------- Logout Handler -----------------
     const handleLogout = async () => {
@@ -54,6 +59,43 @@ const Sidebar = ({
         const droppedFile = e.dataTransfer.files[0];
         if (droppedFile && droppedFile.type === 'application/pdf') {
             setFile(droppedFile);
+        }
+    };
+
+    // ----------------- Add PDF to Existing Thread -----------------
+    const handleAddPdfToThread = async (e) => {
+        const pdfFile = e.target.files?.[0];
+        if (!pdfFile || !activeThreadId) return;
+
+        setIsUploading(true);
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const token = session?.access_token;
+            if (!token) throw new Error("No auth token");
+
+            const formData = new FormData();
+            formData.append("pdf", pdfFile);
+            formData.append("thread_id", activeThreadId);
+
+            const response = await fetch(`${API_URL}/add_pdf`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}` },
+                body: formData
+            });
+
+            const result = await response.json();
+            if (result.status === "success") {
+                onPdfAdded?.(result);
+                alert(`PDF "${pdfFile.name}" added successfully!`);
+            } else if (result.status === "exists") {
+                alert("This PDF is already in this thread.");
+            }
+        } catch (err) {
+            console.error("Error adding PDF:", err);
+            alert("Failed to add PDF");
+        } finally {
+            setIsUploading(false);
+            e.target.value = ""; // Reset input
         }
     };
 
@@ -117,7 +159,32 @@ const Sidebar = ({
                                 exit={{ opacity: 0, height: 0 }}
                                 className="overflow-hidden"
                             >
-                                {!file ? (
+                                {/* Show "Add PDF to Thread" when active thread exists */}
+                                {activeThreadId ? (
+                                    <div
+                                        onClick={() => !isUploading && addPdfInputRef.current?.click()}
+                                        className={`dropzone add-pdf-btn ${isUploading ? 'uploading' : ''}`}
+                                    >
+                                        <input
+                                            ref={addPdfInputRef}
+                                            type="file"
+                                            accept=".pdf"
+                                            onChange={handleAddPdfToThread}
+                                            className="hidden"
+                                        />
+                                        {isUploading ? (
+                                            <>
+                                                <Loader2 className="w-5 h-5 mx-auto mb-2 text-[#676767] animate-spin" />
+                                                <p className="text-xs text-[#ececec]">Adding PDF...</p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Plus className="w-5 h-5 mx-auto mb-2 text-[#676767]" />
+                                                <p className="text-xs text-[#ececec]">Add PDF to Thread</p>
+                                            </>
+                                        )}
+                                    </div>
+                                ) : !file ? (
                                     <div
                                         onDragOver={handleDragOver}
                                         onDragLeave={handleDragLeave}

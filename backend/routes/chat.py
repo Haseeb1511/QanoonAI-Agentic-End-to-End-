@@ -32,8 +32,8 @@ async def ask_question(
     # check token limits first (raises HTTPException if limit exceeded)
     await check_token_limit(user.id)
 
-    # prepare initial state
-    state, thread_id, doc_id = await prepare_initial_state(pdf, question,request)
+    # prepare initial state - now returns doc_ids array
+    state, thread_id, doc_ids = await prepare_initial_state(pdf, question,request)
     
     start_time = time.time()  # start timer before streaming
 
@@ -49,7 +49,7 @@ async def ask_question(
             await run_in_threadpool(
                 lambda:supabase_client.table("threads").upsert({
                 "thread_id": thread_id,
-                "doc_id": doc_id,
+                "doc_ids": doc_ids,
                 "user_id":user.id, # add supbase user id for auth
                 "messages": [
                     {"role": "human", "content": question},
@@ -68,7 +68,7 @@ async def ask_question(
             background_tasks.add_task(
                 log_token_usage,
                 user.id,
-                doc_id,
+                doc_ids[0] if doc_ids else "",  #  Use first doc_id for logging
                 thread_id,
                 token_usage
             )
@@ -111,27 +111,15 @@ async def follow_up(
 
 
     # first we will load previous message for the seelcted thread id that user had previously used
-    previous_messages, doc_id,summary = await load_thread_messages(thread_id,user.id)
+    previous_messages, doc_ids,summary = await load_thread_messages(thread_id,user.id)
 
-    # then we will fetch document info to get collection name
-    # as our langgraph vectorstore is used collection name to fetch relevant chunks from vectorstore
-    # this enusre that retriver fetches from correct document
-    response = await run_in_threadpool(
-        lambda: supabase_client
-        .table("documents")
-        .select("file_name")
-        .eq("doc_id", doc_id)
-        .limit(1)
-        .execute()
-    )
 
-    if not response.data:
-        raise HTTPException(status_code=404, detail="Document not found")
+    if not doc_ids:
+        raise HTTPException(status_code=404, detail="No documents found for this thread")
 
-    # rsplit (sep, maxsplit) 
-    # maxsplit -->maximum number of splits starting from the right.
-    # Here we split the file name at the last period to separate the name from the extension
-    collection_name = response.data[0]["file_name"].rsplit(".", 1)[0].lower().replace(" ", "_")
+    # Use user-based collection name for multi-PDF support
+    collection_name = f"user_{user.id}"
+
 
     messages = []
     # we will append previous message + new message in the messages list  to provide the contet to the model
@@ -163,7 +151,7 @@ async def follow_up(
     # now we will pass the state to the graph
     state = {
         "user_id": user.id,   # unique user id from supbase
-        "doc_id": doc_id,  # which doc_id we are using
+        "doc_ids": doc_ids,  # which doc_id we are using
         "collection_name": collection_name,  # which vectorstore collection to use,
         "summary": summary or " ", # previous summary of the document if exist
         "messages": messages, # list of all previous messages + new question(to provide context to the model)
@@ -230,3 +218,92 @@ async def follow_up(
 # we can access the graph instance in our route handlers via request.app.state.graph 
 # FastAPI allows you to store global-ish objects in the app that are initialized at runtime,using app.state
 # graph = request.app.state.graph
+
+
+# ===================== Add PDF to Existing Thread =====================
+from src.utils.file_hash import get_file_hash
+from pathlib import Path
+import aiofiles
+
+UPLOAD_DIR = Path("uploaded_docs")
+
+@router.post("/add_pdf")
+async def add_pdf_to_thread(
+    request: Request,
+    pdf: UploadFile = File(...),
+    thread_id: str = Form(...),
+    user=Depends(get_current_user)
+):
+    """
+    Add a new PDF to an existing thread.
+    This will:
+    1. Save the PDF file
+    2. Generate doc_id
+    3. Add doc_id to thread's doc_ids array
+    4. Trigger document ingestion
+    """
+    # Save PDF
+    pdf_path = UPLOAD_DIR / pdf.filename
+    async with aiofiles.open(pdf_path, "wb") as f:
+        while chunk := await pdf.read(1024 * 1024):
+            await f.write(chunk)
+    
+    # Generate doc_id with user-based collection
+    new_doc_id = get_file_hash(str(pdf_path))
+    collection_name = f"user_{user.id}"  # User-based collection for multi-PDF
+    
+    # Get existing thread to retrieve current doc_ids
+    thread_response = await run_in_threadpool(
+        lambda: supabase_client.table("threads")
+            .select("doc_ids")
+            .eq("thread_id", thread_id)
+            .eq("user_id", user.id)
+            .single()
+            .execute()
+    )
+    
+    if not thread_response.data:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    
+    existing_doc_ids = thread_response.data.get("doc_ids", []) or []
+    
+    # Check if this doc already exists in thread
+    if new_doc_id in existing_doc_ids:
+        return {"status": "exists", "message": "PDF already in this thread", "doc_id": new_doc_id}
+    
+    # Add new doc_id to array
+    updated_doc_ids = existing_doc_ids + [new_doc_id]
+    
+    # Update thread with new doc_ids
+    await run_in_threadpool(
+        lambda: supabase_client.table("threads")
+            .update({"doc_ids": updated_doc_ids})
+            .eq("thread_id", thread_id)
+            .execute()
+    )
+    
+    # Prepare state for document ingestion only (no question)
+    state = {
+        "user_id": user.id,
+        "documents_path": str(pdf_path),
+        "doc_ids": [new_doc_id],  # Only the new doc for ingestion check
+        "collection_name": collection_name,
+        "messages": [],  # No messages, just ingestion
+        "summary": "",
+        "vectorstore_uploaded": False
+    }
+    
+    # Import nodes from builder (the GraphNodes instance)
+    from src.graph.builder import nodes
+    
+    # Check if already uploaded and ingest if needed
+    state = await nodes.check_pdf_already_uploaded(state)
+    if not state.get("vectorstore_uploaded"):
+        state = await nodes.document_ingestion(state)
+    
+    return {
+        "status": "success",
+        "message": f"PDF '{pdf.filename}' added to thread",
+        "doc_id": new_doc_id,
+        "doc_ids": updated_doc_ids
+    }

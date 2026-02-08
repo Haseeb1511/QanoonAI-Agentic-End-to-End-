@@ -51,20 +51,19 @@ async def prepare_initial_state(pdf, question: str, request: Request):
         while chunk := await pdf.read(1024 * 1024):
             await f.write(chunk)
 
-    # generate doc_id, collection name, thread id
+    # generate doc_id, thread id
     doc_id = get_file_hash(str(pdf_path))  # generate unique doc id based on file content using get_file_hash funciton
-    collection_name = pdf_path.stem.lower().replace(" ", "_")  # "law.pdf".stem -> "law"
     thread_id = str(uuid.uuid4())  # genearate thread id for the conversation
-
 
     # Extract access token(JWT) from request headers
     access_token = get_access_token_from_request(request)
-
 
     # Get user info from Supabase
     user_response = supabase_client.auth.get_user(access_token)
     user_id = user_response.user.id
     
+    # Use user-based collection name for multi-PDF support
+    collection_name = f"user_{user_id}"
 
     # Fetch custom prompt for this user (if exists)
     custom_prompt = None
@@ -83,14 +82,14 @@ async def prepare_initial_state(pdf, question: str, request: Request):
     state = {
         "user_id": user_id,   # unique user id from supbase
         "documents_path": str(pdf_path),
-        "doc_id": doc_id,
+        "doc_ids": [doc_id],  # array of doc_ids for multi-PDF support
         "collection_name": collection_name,
         "messages": [HumanMessage(content=question)],
         "summary": "",
         "custom_prompt": custom_prompt  # User's custom prompt (None = use default)
     }
 
-    return state, thread_id, doc_id
+    return state, thread_id, [doc_id]  # Changed: return array
 
 
 

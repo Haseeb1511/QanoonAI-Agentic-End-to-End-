@@ -104,7 +104,7 @@ class GraphNodes:
 
     # as uspbase = network call  so we make async function to avoid blocking the main thread and also we can do other task while waiting for response from supbase
     async def check_pdf_already_uploaded(self,state:AgentState):
-        """Checkif PDF already exist in SUpbase
+        """Checkif PDF already exist in SUpbase for current user
         Same PDF:    
         - Different user
         - Will embed again (correct behavior)
@@ -112,23 +112,39 @@ class GraphNodes:
         # first check if vectostore already exist
         if state.get("vectorstore_uploaded"):
             return state
-        # we check id documnet exist already or not and also check for user  if for sepcific user it exist or not (sometime one user might have already uploaded the same document )
-        
-        # as supbase client does not suppor async we use run in threadpool
-        # run_in_threadpool expects a callable (lambda), not the result of the call
-        response = await run_in_threadpool(
-            lambda: self.supabase_client.table("documents")
-                        .select("doc_id")
-                        .eq("doc_id", state["doc_id"])
-                        .eq("user_id", state["user_id"])
-                        .limit(1)
-                        .execute()
-        )
-        if response.data:
-            print("Pdf already exist in supbase skipping documnet ingesion...")
-            state["vectorstore_uploaded"] = True
-        else:
+
+        # fetch all the doc_ids from state
+        doc_ids = state.get("doc_ids",[])
+        # if their is no doc id that mean thier is no vectorstore uploaded
+        if not doc_ids:
             state["vectorstore_uploaded"] = False
+            return state
+
+        #check which doc_ids already exist
+        existing_doc_ids = set()
+        for doc_id in doc_ids:
+            # Use default argument (did=doc_id) to capture current value
+            # Without this, lambda would capture the last doc_id from the loop
+            response = await run_in_threadpool(
+                lambda did=doc_id: self.supabase_client.table("documents")
+                            .select("doc_id")
+                            .eq("doc_id", did)
+                            .eq("user_id", state["user_id"])
+                            .limit(1)
+                            .execute()
+            )
+            if response.data:
+                existing_doc_ids.add(doc_id)
+        # Store which ones need ingestion
+        state["existing_doc_ids"] = list(existing_doc_ids)
+        state["new_doc_ids"] = [d for d in doc_ids if d not in existing_doc_ids]
+        state["vectorstore_uploaded"] = len(state["new_doc_ids"]) == 0
+
+        #debugging
+        if state["vectorstore_uploaded"]:
+            print("Pdf already exist in supbase skipping documnet ingesion...")
+        else:
+            print("Pdf not exist in supbase ingesting documnet...")
         return state  
 
 
@@ -145,6 +161,10 @@ class GraphNodes:
         if not os.path.isfile(path):
             raise ValueError(f"Invalid documents_path: {path}")
         
+        # Get doc_id from the doc_ids array (first element for single PDF flow)
+        doc_id = state.get("doc_ids", [])[0] if state.get("doc_ids") else None
+        if not doc_id:
+            raise ValueError("No doc_id found in state")
 
         loader = PyPDFLoader(path)
         documents = loader.load()
@@ -159,7 +179,7 @@ class GraphNodes:
             file_name = os.path.basename(source_path) if source_path else "unknow.pdf"
             metadata = {
                 "user_id":state["user_id"],
-                "doc_id":state["doc_id"],
+                "doc_id": doc_id,  # Use doc_id from array
                 "chunk_index":i,
                 "file_name":file_name,
                 "page":chunk.metadata.get("page")  
@@ -169,7 +189,7 @@ class GraphNodes:
 
         vectorstore = PGVector(
             connection=CONNECTION_STRING,
-            collection_name=state["collection_name"],
+            collection_name=f"user_{state['user_id']}",  # User-based collection for multi-PDF
             embeddings=self.embedding_model,
             use_jsonb=True,
             engine_args={"poolclass": NullPool}  # disable pooling
@@ -186,7 +206,7 @@ class GraphNodes:
         # Insert metadata to supbase table
         rows = [{   
                 "user_id":state["user_id"],
-                "doc_id": state["doc_id"],
+                "doc_id": doc_id,  # Use doc_id from array
                 "chunk_index": i,
                 "file_name": chunk.metadata["file_name"],
                 "page": chunk.metadata.get("page"),
@@ -253,12 +273,18 @@ class GraphNodes:
 
     # Hybrid Retrieval: BM25 (keyword) + Dense (semantic) using EnsembleRetriever
     async def retriever(self, state: AgentState):
+        doc_ids = state.get("doc_ids",[])
+
+        if not doc_ids:
+            state["retrieved_docs"] = []
+            return state
+
         # 1. Load document chunks from Supabase for BM25
         response = await run_in_threadpool(
             lambda: self.supabase_client
             .table("documents")
             .select("content, chunk_index, page, file_name")
-            .eq("doc_id", state["doc_id"])
+            .in_("doc_id", doc_ids)  #  Query multiple doc_ids
             .eq("user_id", state["user_id"])
             .execute()
         )
@@ -272,7 +298,7 @@ class GraphNodes:
             Document(
                 page_content=row["content"],
                 metadata={
-                    "doc_id": state["doc_id"],
+                    "doc_id": doc_ids[0] if doc_ids else "",  # Use first doc_id for metadata
                     "user_id": state["user_id"],
                     "chunk_index": row["chunk_index"],
                     "page": row["page"],
@@ -288,16 +314,24 @@ class GraphNodes:
         # Dense Retriever semantic base it search from vector store
         vectorstore = PGVector(
             connection=CONNECTION_STRING,
-            collection_name=state["collection_name"],
+            collection_name=f"user_{state['user_id']}",  # User-based collection for multi-PDF
             embeddings=self.embedding_model,
             use_jsonb=True,
             engine_args={"poolclass": NullPool}
         )
+        # dense_retriever = vectorstore.as_retriever(
+        #     search_type="similarity",
+        #     search_kwargs={
+        #         "k": 4,
+        #         "filter": {"doc_id": state["doc_id"], "user_id": state["user_id"]}
+        #     }
+        # )
         dense_retriever = vectorstore.as_retriever(
             search_type="similarity",
             search_kwargs={
                 "k": 4,
-                "filter": {"doc_id": state["doc_id"], "user_id": state["user_id"]}
+                "filter": {"doc_id": {"$in": doc_ids},  # Multiple doc_ids filter
+                           "user_id": state["user_id"]}
             }
         )
         

@@ -1,5 +1,30 @@
 # Currently in progress  -- Not yet completed
 
+
+
+
+
+
+
+#
+```bash
+1. commit "setting and custom prompt feature working" it conitain codebase with sinlg epdf per thread
+2. commit  contain multiple pdf per thread
+
+main → single PDF per thread
+feature/multi-pdf → multiple PDFs per thread
+
+
+git checkout -b feature/multi-pdf   # create new branch or swtich to this branch
+# then 
+git add .
+git commit -m "commit message"
+git push origin feature/multi-pdf   # push to remote
+
+```
+
+
+
 # How to run Backend
 ```bash
 
