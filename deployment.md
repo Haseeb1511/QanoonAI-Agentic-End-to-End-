@@ -100,27 +100,21 @@ sudo usermod -aG docker ubuntu
 newgrp docker
 ```
 
-### 4.5 Self-Hosted GitHub Actions Runner (on EC2)
+# 4.5 Self-Hosted GitHub Actions Runner (on EC2)
 This lets GitHub Actions run directly on EC2 — no SSH needed.
-go to 
-setting ==> action ==> runner ==> new self hosted runner ==> linux ==> run the given command in EC2 terminal
+go to   
+``SETTING ==> ACTION ==> RUNNER ==> new self hosted runner ==> linux ==> run the given command in EC2 terminal``
 
+``Install all the commandas``  
+then install the below
 ```bash
-# --- Install the runner ---
-mkdir ~/actions-runner && cd ~/actions-runner
-curl -o actions-runner-linux-x64-2.331.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.331.0/actions-runner-linux-x64-2.331.0.tar.gz
-tar xzf ./actions-runner-linux-x64-2.331.0.tar.gz
 
-# --- Configure (get your token from GitHub → Repo → Settings → Actions → Runners → New self-hosted runner) ---
-./config.sh --url https://github.com/YOUR_USERNAME/YOUR_REPO --token YOUR_TOKEN
-# Press Enter for all prompts to accept defaults
-
-# --- Install as background service (survives SSH disconnect & reboots) ---
+## Keep action runner running in Background
+cd actions-runner
+# Install the runner as a service
 sudo ./svc.sh install
+# Start the runner service
 sudo ./svc.sh start
-
-# Verify it's running
-sudo ./svc.sh status
 
 
 

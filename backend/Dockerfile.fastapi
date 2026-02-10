@@ -16,7 +16,7 @@ RUN apt-get update \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only production requirements
+
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
@@ -29,6 +29,9 @@ EXPOSE 8000
 
 # /app/backend/app.py is the location of FastAPI app
 CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+
 
 # Build from root: docker build -t fastapi-backend -f backend/Dockerfile.fastapi .
 # Run with .env: docker run -p 8000:8000 --env-file .env fastapi-backend
