@@ -1,25 +1,4 @@
-# QanoonAI Deployment Guide
-
-Frontend → GitHub → Vercel (auto-deploy)
-Backend  → Docker → AWS (ECR + EC2)
-
-They are independent pipelines, which is the correct architecture.
-
----
-
-## Frontend (GitHub → Vercel)
-
-- Vercel is connected to GitHub
-- On every push to `main`, Vercel **auto-builds and deploys** the frontend
-- No CI/CD file needed — Vercel handles it natively
-
----
-
-## Backend (GitHub Actions → AWS)
-
-**Trigger:** Push to `main` (only when backend files change)
-
-**Pipeline (Self-hosted runner on EC2 — no SSH needed):**
+# Pipeline (Self-hosted runner on EC2 — no SSH needed):
 ```
 Git Push (main)
   │
@@ -32,11 +11,18 @@ Git Push (main)
         └── Start new container on port 8000
 ```
 
----
 
-## AWS Setup Checklist
 
-### 1. IAM User (for GitHub Actions)
+  
+  
+  
+
+
+
+
+# AWS Setup Checklist
+
+## 1. IAM User (for GitHub Actions)
 - Create user: `qanoon-ai`
 - Attach policy: `AmazonEC2ContainerRegistryFullAccess`
 - Create **Access Key** (Third-party service) → save Key ID & Secret
@@ -74,9 +60,13 @@ Add secrets to GitHub	N/A	GitHub Settings
 | SSH        | 22   | 0.0.0.0/0  | GitHub Actions runners (dynamic IPs) |
 | Custom TCP | 8000 | 0.0.0.0/0  | Backend API access                   |
 
-> **Why 0.0.0.0/0 for SSH?** GitHub Actions runners use different IPs on every run, so we can't whitelist a fixed IP. The `.pem` key pair protects access. For extra security, disable password-based SSH on EC2 (it's disabled by default on Ubuntu AMIs).
 
-#### How to update the Security Group in AWS Console:
+
+
+
+---
+
+## How to update the Security Group in AWS Console:
 1. Go to **EC2 → Instances** → select your instance
 2. Click the **Security** tab → click the **Security Group link**
 3. Click **Edit inbound rules**
@@ -85,11 +75,17 @@ Add secrets to GitHub	N/A	GitHub Settings
 6. Click **Save rules**
 7. Go back to GitHub → **Actions** tab → re-run the failed workflow
 
-### 4. EC2 Instance Setup (SSH in)
+
+
+
+---
+
+
+# Step 1: EC2 Instance Setup (SSH in)
 Go to EC2 → Instances → select your instance → click **Connect**
 
 ```bash
-# --- Step 1: Install Docker (official script, works on all Ubuntu versions) ---
+# Step 1: Install Docker 
 curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh get-docker.sh
 
@@ -100,7 +96,13 @@ sudo usermod -aG docker ubuntu
 newgrp docker
 ```
 
-# 4.5 Self-Hosted GitHub Actions Runner (on EC2)
+
+
+
+---
+
+
+# Step 2: Self-Hosted GitHub Actions Runner (on EC2)
 This lets GitHub Actions run directly on EC2 — no SSH needed.
 go to   
 ``SETTING ==> ACTION ==> RUNNER ==> new self hosted runner ==> linux ==> run the given command in EC2 terminal``
@@ -119,7 +121,13 @@ sudo ./svc.sh start
 
 cd ..  # move out of action runner for next commands
 
-# --- Step 2: Install AWS CLI v2 (apt version is broken on Ubuntu 24.04) ---
+```
+
+
+
+
+# Step 3: Install AWS CLI 
+```bash
 sudo apt-get install -y unzip
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
 unzip awscliv2.zip
@@ -130,7 +138,11 @@ docker --version
 aws --version
 
 ```
-# Step 3: Configure AWS CLI
+
+
+
+
+# Step 4: Configure AWS CLI
 ```bash
 # --- Step 3: Configure AWS CLI (so EC2 can pull images from ECR) ---
 # This sets up credentials so your EC2 can pull images from ECR when a workflow runs.
@@ -139,8 +151,7 @@ aws configure
 # Enter: Access Key ID, Secret Access Key, region (eu-north-1), output format (json) (Ec2 secrets)
 
 
-
-# --- Step 4: Create .env file with your app secrets ---
+# Step 4: Create .env file with your app secrets 
 nano /home/ubuntu/.env
 # Paste all your env vars (SUPABASE_URL, OPENAI_API_KEY, etc.)
 # OPENAI_API_KEY=sk-5mECuwLsT...
@@ -153,6 +164,10 @@ nano /home/ubuntu/.env
 # JWT_SECRET=08abce0923df...
 
 ```
+
+
+
+
 
 ### 5. GitHub Repository Secrets
 Go to **GitHub Repo → Settings → Secrets → Actions** and add:
@@ -180,26 +195,67 @@ Go to your GitHub Actions tab.
 
 # How to test after Deployed on AWS
 
+```bash
+# Get your public IP
+curl http://checkip.amazonaws.com  #13.60.87.193
 
 
 
+# Replace <PUBLIC_IP> with the IP from above
 
-## Manual Deploy (first time or emergency)
+# 1. Check docs page (open in browser)
+http://<PUBLIC_IP>:8000/docs
+
+# 2. Health check from terminal
+curl http://<PUBLIC_IP>:8000/docs
+
+# 3. Check the OpenAPI spec
+curl http://<PUBLIC_IP>:8000/openapi.json
+
+```
+
+
+
+# Final step url must be HTTP
+Your frontend is on HTTPS (https://qanoon-ai.vercel.app), but your backend is on HTTP (http://13.60.87.193:8000). Browsers block secure sites (HTTPS) from talking to insecure APIs (HTTP) for security reasons.
+
+
+The Solution
+You must make your backend HTTPS.
+
+Since you are using a raw EC2 IP address, you can't easily get an SSL certificate for it directly.
 
 ```bash
-# SSH into EC2
-ssh -i your-key.pem ubuntu@<ec2-public-ip>
-
-# Login to ECR
-aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <account_id>.dkr.ecr.<region>.amazonaws.com
-
-# Pull and run
-docker pull <account_id>.dkr.ecr.<region>.amazonaws.com/qanoonai-backend:latest
-
-docker run -d \
-  --name qanoonai-backend \
-  -p 8000:8000 \
-  --restart always \
-  --env-file /home/ubuntu/.env \
-  <account_id>.dkr.ecr.<region>.amazonaws.com/qanoonai-backend:latest
+Vercel (HTTPS)
+   ↓
+CloudFront (HTTPS)
+   ↓
+EC2 Backend (HTTP :8000)
 ```
+
+## Option A: Use AWS CloudFront
+
+CloudFront acts as a secure "mask" in front of your EC2. It gives you an HTTPS URL (e.g., https://d12345.cloudfront.net) that forwards requests to your HTTP EC2.
+
+
+1. Go to AWS Console -> CloudFront -> Create Distribution.
+
+2. Origin Domain: Enter your EC2 Public DNS (e.g., ec2-13-60-87-193.eu-north-1.compute.amazonaws.com).
+
+  * Tip: Do not just paste the IP. Use the Public DNS name from EC2 console.
+  * Chose origin type ===> other
+  * in origin--> s3  --> add this public dns url
+  * after creation of distribution 
+  * Go to that distribution click origin ==> select origin ===> select Edit
+  * In origin protocol ===> HTTP only
+
+
+3. Cache Policy: Go to your Distribution==> Behaviour===>  CachingDisabled (Crucial for APIs).
+ * Allowed HTTP Methods: GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE.
+ * Origin Request Policy: AllViewer (Crucial to pass headers like Auth).
+ * Redirect HTTP to HTTPS.
+
+
+4. Wait for deploy, then copy the new CloudFront URL (https://d123...cloudfront.net).
+
+5. Update your frontend environment variable VITE_API_URL to this new URL.
