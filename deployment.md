@@ -178,6 +178,14 @@ Go to your GitHub Actions tab.
 * If it's Green ✅, your backend is live on EC2!
 * If it's Red ❌, click it → click build-and-deploy → see the error.
 
+
+
+# How to test after Deployed on AWS
+
+
+
+
+
 ## Manual Deploy (first time or emergency)
 
 ```bash
