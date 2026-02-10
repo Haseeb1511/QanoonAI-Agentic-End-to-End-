@@ -22,6 +22,16 @@ async def lifespan(app: FastAPI):
         # wehave to checkpointer and graph instance in app state so that we can access it in route handlers
         app.state.checkpointer = cp
         app.state.graph = GraphBuilder(checkpointer=cp).build_graph()
+        
+        # Save graph visualization as PNG in project root
+        try:
+            graph_png = app.state.graph.get_graph().draw_mermaid_png()
+            with open("graph.png", "wb") as f:
+                f.write(graph_png)
+            print("Graph image saved to graph.png")
+        except Exception as e:
+            print(f"Could not save graph image: {e}")
+        
         print("Graph + Checkpointer ready")
         yield
 

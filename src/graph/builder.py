@@ -27,6 +27,10 @@ class GraphBuilder:
         workflow.add_node("document_ingestion",nodes.document_ingestion)
         workflow.add_node("query_rewriter", nodes.query_rewriter)
         workflow.add_node("retriever", nodes.retriever)
+
+        workflow.add_node("retrieval_grader", nodes.retrieval_grader)  # CRAG: grade docs
+        workflow.add_node("query_transformer", nodes.query_transformer)  # CRAG: rewrite query on retry
+        
         workflow.add_node("context_builder", nodes.context_builder)
         workflow.add_node("agent_response", nodes.agent_response)
         workflow.add_node("summarize", nodes.summary_creation)
@@ -49,7 +53,19 @@ class GraphBuilder:
         workflow.add_edge("document_ingestion","query_rewriter")
 
         workflow.add_edge("query_rewriter", "retriever")
-        workflow.add_edge("retriever", "context_builder")
+
+        # CRAG: retriever → grade docs → decide (generate or retry)
+        workflow.add_edge("retriever", "retrieval_grader")
+        workflow.add_conditional_edges(
+            "retrieval_grader",
+            nodes.decide_to_generate,
+            {
+                "context_builder": "context_builder",
+                "query_transformer": "query_transformer"
+            }
+        )
+        workflow.add_edge("query_transformer", "retriever")  # CRAG retry loop
+
         workflow.add_edge("context_builder", "agent_response")
 
         workflow.add_conditional_edges(

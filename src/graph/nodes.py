@@ -351,6 +351,131 @@ class GraphNodes:
         return state
 
 
+
+    # ======================== CORRECTIVE RAG ========================
+
+    # After retriever fetches docs, retrieval_grader asks the LLM to grade each doc as "relevant" or "irrelevant" (all docs graded in parallel)
+    # Only relevant docs are kept. A retrieval_confidence score is calculated
+    # decide_to_generate checks:
+    # ≥ 25% relevant → proceed to context_builder (generate answer)
+    # SECOND SCENERIO
+    # < 25% relevant + no retries yet → query_transformer rewrites the query → loops back to retriever
+    # Retries exhausted → proceed to generate with available docs
+
+    async def retrieval_grader(self, state: AgentState):
+        """
+        Corrective RAG - Grade each retrieved document for relevance.
+        Uses the LLM to assess whether each document is relevant to the query.
+        Filters out irrelevant docs and sets retrieval_confidence score.
+        """
+        docs = state.get("retrieved_docs", [])
+        query = state.get("rewritten_query") or state["messages"][-1].content
+
+        # If no docs were retrieved, set confidence to 0
+        if not docs:
+            state["retrieval_confidence"] = 0.0
+            return state
+
+        grader_prompt = """You are a document relevance grader.
+        Your job is to assess whether a retrieved document is relevant to the user's query.
+
+        Query: {query}
+
+        Document:
+        {document}
+
+        Does this document contain information relevant to answering the query?
+        Respond with ONLY one word: "relevant" or "irrelevant"
+        """
+
+        async def grade_single_doc(doc):
+            """Grade a single document for relevance."""
+            prompt = grader_prompt.format(
+                query=query,
+                document=doc.page_content[:1000]  # Limit to first 1000 chars to save tokens
+            )
+            result = await self.llm.ainvoke([HumanMessage(content=prompt)])
+            return doc, "relevant" in result.content.strip().lower()
+
+        # Grade all documents in parallel for speed
+        #Each document is graded independently:
+        grading_results = await asyncio.gather(
+            *[grade_single_doc(doc) for doc in docs]
+        )
+
+        # Filter to only relevant docs
+        # if only one doc is relevant then we will take it and use for answer generation
+        # if more than one doc is relevant then we will take all of them    
+        # relevant_docs = [doc2]  we will get each doc as each doc is independenlt graded
+        # confidence = 1 / 4 = 0.25
+        relevant_docs = [doc for doc, is_relevant in grading_results if is_relevant]
+        confidence = len(relevant_docs) / len(docs) if docs else 0.0
+
+        print(f"[CRAG] Graded {len(docs)} docs → {len(relevant_docs)} relevant (confidence: {confidence:.2f})")
+
+        # Update state with filtered docs and confidence
+        state["retrieved_docs"] = relevant_docs
+        state["retrieval_confidence"] = confidence
+        return state
+
+
+    async def query_transformer(self, state: AgentState):
+        """
+        Corrective RAG - Transform the query for better retrieval.
+        Called when retrieval_grader finds low confidence.
+        Rewrites the query to improve keyword matching and semantic search.
+        """
+        query = state.get("rewritten_query") or state["messages"][-1].content
+
+        transform_prompt = f"""You are a query optimizer for a document retrieval system.
+        The original query did not retrieve relevant documents.
+
+        Original query: {query}
+
+        Rewrite this query to improve document retrieval. Focus on:
+        1. Use more specific legal/technical terminology
+        2. Extract key concepts and entities
+        3. Remove ambiguous phrasing
+        4. Keep the core intent intact
+
+        Return ONLY the rewritten query, nothing else."""
+
+        response = await self.llm.ainvoke([HumanMessage(content=transform_prompt)])
+        transformed_query = response.content.strip()
+
+        # Increment retry counter
+        retries = state.get("crag_retries", 0) + 1
+
+        print(f"[CRAG] Query transformed (retry {retries}): '{query}' → '{transformed_query}'")
+
+        state["rewritten_query"] = transformed_query
+        state["crag_retries"] = retries
+        return state
+
+    # conditional node
+    def decide_to_generate(self, state: AgentState):
+        """
+        Corrective RAG - Conditional edge: decide whether to generate or retry retrieval.
+        - If confidence >= 0.25 (at least 1/4 docs relevant) → generate answer
+        - If confidence < 0.25 and retries < 1 → rewrite query and retry
+        - If retries exhausted → generate with whatever we have
+        """
+        confidence = state.get("retrieval_confidence", 0.0)
+        retries = state.get("crag_retries", 0)
+
+        if confidence >= 0.25:
+            print(f"[CRAG] Confidence {confidence:.2f} ≥ 0.25 → generating answer")
+            return "context_builder"
+        elif retries < 1:
+            print(f"[CRAG] Confidence {confidence:.2f} < 0.25, retry {retries} → transforming query")
+            return "query_transformer"
+        else:
+            print(f"[CRAG] Retries exhausted ({retries}) → generating with available docs")
+            return "context_builder"
+
+    # =================== END CORRECTIVE RAG ===================
+
+
     # file_name is added during text splitting
     # page exists → PyPDFLoader adds this automatically
     # as it is in the middile of our graph which is async we have to make it async also

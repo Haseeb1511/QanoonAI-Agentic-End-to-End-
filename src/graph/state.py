@@ -23,3 +23,7 @@ class AgentState(TypedDict,total=False):
     rewritten_query:str
     token_usage: Dict[str, Any]
     custom_prompt: str  # User's custom prompt
+
+    
+    retrieval_confidence: float  # CRAG: ratio of relevant docs (0.0–1.0)
+    crag_retries: int  # CRAG: retry counter (max 1)
