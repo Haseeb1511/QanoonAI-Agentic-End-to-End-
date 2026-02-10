@@ -117,6 +117,7 @@ sudo ./svc.sh install
 sudo ./svc.sh start
 
 
+cd ..  # move out of action runner for next commands
 
 # --- Step 2: Install AWS CLI v2 (apt version is broken on Ubuntu 24.04) ---
 sudo apt-get install -y unzip
@@ -128,9 +129,12 @@ sudo ./aws/install
 docker --version
 aws --version
 
-
-
+```
+# Step 3: Configure AWS CLI
+```bash
 # --- Step 3: Configure AWS CLI (so EC2 can pull images from ECR) ---
+# This sets up credentials so your EC2 can pull images from ECR when a workflow runs.
+# Must happen after AWS CLI is installed, otherwise aws configure won’t work.
 aws configure
 # Enter: Access Key ID, Secret Access Key, region (eu-north-1), output format (json) (Ec2 secrets)
 
