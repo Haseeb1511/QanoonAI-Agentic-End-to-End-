@@ -17,6 +17,7 @@ langgraph-checkpoint
 langgraph-checkpoint-postgres
 pypdf
 
+
 #Database
 SQLAlchemy
 psycopg2-binary
