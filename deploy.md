@@ -180,6 +180,7 @@ Go to **GitHub Repo → Settings → Secrets → Actions** and add:
 | `EC2_HOST`               | EC2 public IP or DNS                                      |
 | `EC2_SSH_KEY`            | Full contents of your `.pem` file                         |
 | `ECR_REGISTRY`           | `<account_id>.dkr.ecr.<region>.amazonaws.com`             |
+| `CLOUDFRONT_DISTRIBUTION_ID` | cloudfront distribution id                                |
 
 ---
 
