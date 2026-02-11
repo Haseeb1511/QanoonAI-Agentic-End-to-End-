@@ -33,7 +33,9 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     return user.user
 
 
-
+# for local testing we have to run the fronend then login then go to 
+# INSPECT ===> APPLICATION ===> STORAGE ===> Local Storage ===> copy token
+# then paste it in the swagger UI
 
 
 # for development only we can create our own JWT secret

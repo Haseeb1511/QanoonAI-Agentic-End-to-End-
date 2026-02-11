@@ -321,32 +321,39 @@ const ChatWindow = ({
       )}
 
       <div className="chat-main">
-        {messages.map((msg, idx) => (
-          <motion.div
-            key={idx}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className={`message-bubble ${msg.role === "human" ? "user" : "ai"}`}
-          >
-            <div className="message-content">
-              {msg.content ? (
-                msg.role === "ai" ? (
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+        {messages.length === 0 ? (
+          <div className="empty-state">
+            <h1>Qanoon AI</h1>
+            <p>Ask me any legal query</p>
+          </div>
+        ) : (
+          messages.map((msg, idx) => (
+            <motion.div
+              key={idx}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`message-bubble ${msg.role === "human" ? "user" : "ai"}`}
+            >
+              <div className="message-content">
+                {msg.content ? (
+                  msg.role === "ai" ? (
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  ) : (
+                    msg.content
+                  )
                 ) : (
-                  msg.content
-                )
-              ) : (
-                loading && idx === messages.length - 1 && (
-                  <div className="typing-indicator">
-                    <span className="typing-dot" />
-                    <span className="typing-dot" />
-                    <span className="typing-dot" />
-                  </div>
-                )
-              )}
-            </div>
-          </motion.div>
-        ))}
+                  loading && idx === messages.length - 1 && (
+                    <div className="typing-indicator">
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                    </div>
+                  )
+                )}
+              </div>
+            </motion.div>
+          ))
+        )}
         <div ref={messagesEndRef} />
       </div>
 

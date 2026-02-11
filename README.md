@@ -1,139 +1,93 @@
-# Currently in progress  -- Not yet completed
+# QanoonAI - Agentic Legal Assistant
 
+![Project Overview](image.png)
 
-![alt text](graph.png)
+**QanoonAI** is an intelligent, agentic RAG (Retrieval-Augmented Generation) system designed for legal queries. It leverages advanced AI to process legal documents, understand context, and provide accurate, citation-backed answers.
 
+## 🚀 Features
 
+- **Agentic RAG**: Context-aware retrieval and generation using LangGraph.
+- **Multi-PDF Support**: Upload and query multiple legal documents within a single conversation thread.
+- **Intelligent Summarization**: Automatically summarizes long conversation threads to maintain context.
+- **Audio Integration**: Voice input and text-to-speech output for accessible interaction.
+- **Rate Limiting**: Built-in token usage tracking to manage costs and prevent abuse.
+- **Secure Authentication**: User authentication via Supabase Auth.
 
+## 🛠️ Tech Stack
 
-# How to run this project
+### Frontend
+- **Framework**: React v19
+- **Build Tool**: Vite
+- **Styling**: Tailwind CSS v4
+
+### Backend
+- **API**: FastAPI (Python)
+- **AI Framework**: LangChain & LangGraph
+- **Package Manager**: `uv`
+
+### Database & Infra
+- **Database**: Supabase (PostgreSQL + pgvector)
+- **Deployment**: AWS EC2 (Backend) & Vercel (Frontend)
+
+---
+
+## 🏁 Getting Started
+
+Follow these steps to set up the project locally.
+
+### Prerequisites
+- **Python 3.10+** (Recommend using `uv` for management)
+- **Node.js 18+** & `npm`
+
+### 1. Backend Setup
+
 ```bash
+# Install uv if you haven't already
 pip install uv
+
+# Initialize and install dependencies
 uv init
 uv add -r requirements.txt
 
-
-```
-#
-```bash
-1. commit "setting and custom prompt feature working" it conitain codebase with sinlg epdf per thread
-2. commit  contain multiple pdf per thread
-
-main → single PDF per thread
-feature/multi-pdf → multiple PDFs per thread
-
-
-git checkout -b feature/multi-pdf   # create new branch or swtich to this branch
-# then 
-git add .
-git commit -m "commit message"
-git push origin feature/multi-pdf   # push to remote
-
+# Run the FastAPI server
+uv run uvicorn backend.app:app --reload
 ```
 
+The backend API will be available at `http://localhost:8000`.
 
+### 2. Frontend Setup
 
-# How to run Backend
+Open a new terminal and navigate to the `frontend` directory:
+
 ```bash
+cd frontend
 
-uv run uvicorn backend.app:app --reload  # to run fast api
-uv run python -m backend.app # same as above but(not recomeneded with fastAPI)
-
-```
-
-# FronEnd
-```bash
+# Install dependencies
 npm install
-# how to run froned
-npm run frontend
 
+# Start the development server
+npm run dev
 ```
+
+The frontend will be available at `http://localhost:5173`.
 
 ---
-# TOOl used
-```bash
-React v19
-vite 
-tailwand css v4
-javascript
 
-# Backend 
-Fastpai
+## 📂 Project Structure
 
-langchain
-langgraph
+- `backend/`: FastAPI application, LangGraph nodes, and API routes.
+- `frontend/`: React application source code.
+- `docs/`: Additional documentation and diagrams.
+- `.github/workflows/`: CI/CD pipelines for AWS deployment.
 
+## 🤝 Contributing
 
-```
+1.  **Fork** the repository.
+2.  Create a **Feature Branch** (`git checkout -b feature/AmazingFeature`).
+3.  **Commit** your changes (`git commit -m 'Add some AmazingFeature'`).
+4.  **Push** to the branch (`git push origin feature/AmazingFeature`).
+5.  Open a **Pull Request**.
 
+---
 
-
-# From:
-response = self.llm.invoke(prompt_messages)
-
-# To:
-response = self.llm.with_config(tags=["response"]).invoke(prompt_messages)
-
-
-
-
-# upload
-fix issue of rewritten query being printed 111
-imporve ui    2222 
-jwt authenticaiton   6666
-docker trest  3333
-urdu translation   5555
-modulat fastapi   4444
-docker fast api ---> aws
-frontend  ---> vercel
-
-
-
-# Google OAuth 2.0 login + JWT-based authentication/authorization
-
-
-
-# How summary Generation work
-```bash
-
-User Q1 → Q2 → Q3 (3rd message triggers summarizer)
-                    ↓
-              Creates summary
-                    ↓
-              Saved to Supabase
-                    ↓
-User Q4 → Loads summary from DB
-              ↓
-        Query Rewriter uses summary
-              ↓
-        Agent Response uses summary
-              ↓
-        Summary extended (if messages ≥3 again)
-
-```
-
-
-
-# How to add Rate limit in app
-
-```bash
-
-| File                                   | Change                                                   |
-|----------------------------------------|----------------------------------------------------------|
-| backend/routes/chat.py                 | Add token limit check before `/ask` and `/follow_up`     |
-| backend/routes/audio.py                | Add same check for audio endpoints                       |
-| frontend/src/components/ChatWindow.jsx | Handle `429` error and show token limit message          |
-| frontend/src/App.jsx                   | Optionally disable input when `userTotalTokens >= 100000`|
-
-
-
-```
-
-
-
-
-```powershell
-time for update token usage 
-const id = setInterval(poll, 5000);
-in app.jsx
-```
+**Note**: This project is currently in active development.
