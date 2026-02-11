@@ -259,3 +259,6 @@ CloudFront acts as a secure "mask" in front of your EC2. It gives you an HTTPS U
 4. Wait for deploy, then copy the new CloudFront URL (https://d123...cloudfront.net).
 
 5. Update your frontend environment variable VITE_API_URL to this new URL.
+
+6.  important if you get forbidden cors error on cloudfront (using swagger UI)
+ * got to SECURITY ===> MANAGE PROTEXTION ===> SELECT THE USE MONITOR MODE

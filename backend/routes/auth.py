@@ -1,53 +1,33 @@
-from fastapi import APIRouter,Request,HTTPException
-from fastapi.responses import RedirectResponse,JSONResponse
+from fastapi import APIRouter, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from src.db_connection.connection import supabase_client
-import os
-import jwt
-import httpx
 from dotenv import load_dotenv
+
 load_dotenv()
-
-
-# router = APIRouter(prefix="/auth")
 
 router = APIRouter()
 
-
-# authentication middleware --> dependency
 # -------------------- JWT verification dependency --------------------
-import os
-from dotenv import load_dotenv
+# HTTPBearer automatically checks for "Authorization: Bearer <token>"
+# and enables the "Authorize" button in Swagger UI.
+security = HTTPBearer()
 
-load_dotenv()
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """
+    Validates the Bearer token from the Authorization header.
+    Returns the user object if valid, raises 401 otherwise.
+    Compatible with both Frontend and Swagger UI.
+    """
+    token = credentials.credentials
 
-SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
-async def get_current_user(request: Request):
-    auth_header = request.headers.get("Authorization")
-    if not auth_header:
-        raise HTTPException(status_code=401, detail="Missing auth")
-
-    token = auth_header.replace("Bearer ", "")
-
-    user = supabase_client.auth.get_user(token)
+    try:
+        # Verify token with Supabase
+        user = supabase_client.auth.get_user(token)
+    except Exception as e:
+        # Handle cases where Supabase client raises an error (e.g. network)
+        raise HTTPException(status_code=401, detail="Invalid authentication credentials")
 
     if not user or not user.user:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="Invalid token or expired session")
 
     return user.user
-
-
-#JWT from supbase contain 
-# {
-#   "sub": "user_id",
-#   "email": "...",
-#   "role": "authenticated",
-#   "exp": ...
-# }
-
-
-
-
-
-
-
-

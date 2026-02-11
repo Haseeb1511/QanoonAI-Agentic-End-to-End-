@@ -18,12 +18,6 @@ add the deployed url as env in vercel env
 then add that url in supbase also
 
 
-1. Framework Preset: Vercel usually detects "Vite" automatically. If not, select Vite.
-2. Root Directory: Select frontend.
-3. Build Command: vite build (default)
-4. Output Directory: dist (default)
-5. Environment Variables:
-
 ```
 Crucial: You must add your environment variables (like VITE_API_URL, VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY) in the Environment Variables section of your Vercel project settings. The .env file is not uploaded to Vercel for security reasons.
 Tip: Copy them from your local .env file and paste them into Vercel.
