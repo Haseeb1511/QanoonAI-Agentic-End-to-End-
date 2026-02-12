@@ -371,7 +371,7 @@ const ChatWindow = ({
                 handleSubmit();
               }
             }}
-            disabled={loading || (!activeThread && !file) || isLimitReached}
+            disabled={(!activeThread && !file) || isLimitReached}
           />
 
           <div className="actions">

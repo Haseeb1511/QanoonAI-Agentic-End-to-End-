@@ -199,7 +199,7 @@ async def follow_up(
             background_tasks.add_task(
                 log_token_usage,
                 user.id,
-                doc_id,
+                doc_ids[0] if doc_ids else "",
                 thread_id,
                 token_usage
             )

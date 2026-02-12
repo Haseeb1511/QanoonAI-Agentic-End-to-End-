@@ -87,10 +87,10 @@ class GraphNodes:
         self.supabase_client = supbase_client
             
     
-    
+    #The set_doc_id function now correctly checks if doc_ids (plural) are already present in the state. If they are (which is the case for follow-up questions), it skips the file hashing process, preventing the "Directory uploaded not supported" error when the temporary file is missing.
     def set_doc_id(self,state:AgentState):
-        # Skip if doc_id already exists 
-        if state.get("doc_id"):
+        # Skip if doc_ids (plural - existing flow) or doc_id (singular - legacy/initial) already exists 
+        if state.get("doc_ids") or state.get("doc_id"):
             return state
             
         path = os.path.abspath(state["documents_path"])
@@ -168,11 +168,15 @@ class GraphNodes:
 
         print(f"Starting background ingestion for doc_id: {doc_id}")
 
-        loader = PyPDFLoader(path)
-        documents = loader.load()
+        # Wrap blocking operations in a helper function to run in threadpool
+        def load_and_split():
+            loader = PyPDFLoader(path)
+            docs = loader.load()
+            splitter = RecursiveCharacterTextSplitter(chunk_size=1000,chunk_overlap=200)
+            return splitter.split_documents(docs)
 
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000,chunk_overlap=200)
-        chunks = splitter.split_documents(documents)
+        # Run heavy I/O and CPU work in threadpool to keep server responsive
+        chunks = await run_in_threadpool(load_and_split)
 
         # langchain chunk metadata is first updated
         # langchain chunk metadata (each chunk of document will have this metadata (it will not have page content - only metadata))
