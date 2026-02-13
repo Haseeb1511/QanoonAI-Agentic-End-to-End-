@@ -1,8 +1,13 @@
 # QanoonAI - Agentic Legal Assistant
 
-![Project Overview](image.png)
+<!-- ![Project Overview](image.png) -->
 
 **QanoonAI** is an intelligent, agentic RAG (Retrieval-Augmented Generation) system designed for legal queries. It leverages advanced AI to process legal documents, understand context, and provide accurate, citation-backed answers.
+
+# App
+![Frontend](images/fontend_deploy.png)
+# Backend
+![Backend](images/backend_deploy.png)
 
 ## 🚀 Features
 
@@ -75,7 +80,8 @@ The frontend will be available at `http://localhost:5173`.
 
 ## 📂 Project Structure
 
-- `backend/`: FastAPI application, LangGraph nodes, and API routes.
+- `backend/`: FastAPI application, and API routes.
+- `src/`: LangGraph orchestration.
 - `frontend/`: React application source code.
 - `docs/`: Additional documentation and diagrams.
 - `.github/workflows/`: CI/CD pipelines for AWS deployment.
