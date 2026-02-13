@@ -5,7 +5,7 @@ from fastapi.concurrency import run_in_threadpool
 
 # ============================ Token limit check ============================
 
-TOKEN_LIMIT = 10000
+TOKEN_LIMIT = 100000
 
 async def check_token_limit(user_id:str):
     # fetch the usage table from database and select its total_tokens attribute

@@ -1,5 +1,6 @@
 from fastapi import HTTPException, UploadFile, Form, File, Request, Depends
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response
+
 from langchain_core.messages import HumanMessage, AIMessage
 from src.db_connection.connection import supabase_client
 from backend.services.initial_state import prepare_initial_state
@@ -18,7 +19,7 @@ import json
 from backend.services.token_limit import check_token_limit
 
 # audio files
-from src.audio.voice import text_to_speech, text_to_speech_bytes
+from src.audio.voice import text_to_speech_bytes
 from src.audio.transcription import AudioToText
 
 from backend.services.log_token_usage import log_token_usage
@@ -42,7 +43,7 @@ async def transcribe_audio_file(audio: UploadFile) -> str:
         audio_path = temp_file.name
 
     # Transcribe audio to text
-    question = await asyncio.to_thread(audio_to_text.transcribe, audio_path)
+    question = await audio_to_text.transcribe(audio_path)
     
     # Cleanup temp file
     try:
@@ -76,6 +77,7 @@ async def ask_question_audio(
     # check token limits first (raises HTTPException if limit exceeded)
     await check_token_limit(user.id)
 
+    # Transcribe audio to text first (before streaming starts)
     # Transcribe audio to text first (before streaming starts)
     question = await transcribe_audio_file(audio)
     print("Transcribed audio to text:", question)
@@ -252,13 +254,18 @@ async def text_to_speech_endpoint(
     Convert text to speech and return audio file.
     """
     try:
-        audio_bytes = await asyncio.to_thread(text_to_speech_bytes, text)
+        if len(text) > 4096:
+            raise HTTPException(status_code=400, detail="Text too long (max 4096 characters)")
+
+        audio_bytes = await text_to_speech_bytes(text)
+        print(f"Generated TTS audio: {len(audio_bytes)} bytes") # DEBUG LOG
         
-        return StreamingResponse(
-            iter([audio_bytes]),
+        return Response(
+            content=audio_bytes,
             media_type="audio/mpeg",
             headers={
-                "Content-Disposition": "attachment; filename=response.mp3"
+                "Cache-Control": "no-cache",
+                # "Content-Disposition": "attachment; filename=response.mp3" << Removed to prevent IDM interception
             }
         )
     except Exception as e:

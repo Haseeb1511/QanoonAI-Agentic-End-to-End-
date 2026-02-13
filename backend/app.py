@@ -4,7 +4,9 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from src.graph.builder import GraphBuilder
 from src.db_connection.connection import CONNECTION_STRING
 from fastapi import FastAPI
-
+from src.agent.model_loader import llm, EMBEDDING
+from langchain_core.messages import HumanMessage
+import asyncio
 
 # -------------------- LIFESPAN --------------------
 # we will use asyn context manager as it help in writing async context manager whiich is useful for fastapi as we will use  async funciton in fastapi
@@ -22,7 +24,7 @@ async def lifespan(app: FastAPI):
         # wehave to checkpointer and graph instance in app state so that we can access it in route handlers
         app.state.checkpointer = cp
         app.state.graph = GraphBuilder(checkpointer=cp).build_graph()
-        
+    
         # Save graph visualization as PNG in project root
         try:
             graph_png = app.state.graph.get_graph().draw_mermaid_png()
@@ -33,6 +35,20 @@ async def lifespan(app: FastAPI):
             print(f"Could not save graph image: {e}")
         
         print("Graph + Checkpointer ready")
+
+        # ==================== WARM-UP ROUTINE ====================
+        print("Starting model warm-up...")
+        try:
+            # Run warm-up tasks concurrently
+            await asyncio.gather(
+                llm.ainvoke([HumanMessage(content="Hello")]),
+                EMBEDDING.aembed_query("Hello world")
+            )
+            print("Models warmed up successfully!")
+        except Exception as e:
+            print(f"Warm-up failed: {e}")
+        # =========================================================
+
         yield
 
 

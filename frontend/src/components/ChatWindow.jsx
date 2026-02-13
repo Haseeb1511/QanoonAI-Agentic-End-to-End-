@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Send, Loader2, Mic, PanelLeft } from "lucide-react";
+import { Send, Loader2, Mic, PanelLeft, Volume2, Pause, Play } from "lucide-react";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 
@@ -29,6 +29,9 @@ const ChatWindow = ({
   const abortControllerRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const [playingMessageId, setPlayingMessageId] = useState(null); // Track which message is playing audio
+  const [loadingAudioId, setLoadingAudioId] = useState(null); // Track which message is loading audio
+  const audioPlayerRef = useRef(new Audio()); // Single audio instance
 
 
 
@@ -156,6 +159,71 @@ const ChatWindow = ({
     } catch (err) {
       console.error(err);
       setLoading(false);
+    }
+  };
+
+  // ========================= Handle TTS Audio Playback ==================
+  const handlePlayAudio = async (text, index) => {
+    // If playing this message, pause it
+    if (playingMessageId === index) {
+      audioPlayerRef.current.pause();
+      setPlayingMessageId(null);
+      return;
+    }
+
+    // If loading this message, ignore click
+    if (loadingAudioId === index) return;
+
+    // Stop ongoing playback
+    if (playingMessageId !== null) {
+      audioPlayerRef.current.pause();
+      setPlayingMessageId(null);
+    }
+
+    setLoadingAudioId(index); // Start loading
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      const formData = new FormData();
+      formData.append("text", text);
+
+      const response = await fetch(`${API_URL}/tts`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error("TTS request failed");
+
+      const blob = await response.blob();
+      const audioUrl = URL.createObjectURL(blob);
+
+      audioPlayerRef.current.src = audioUrl;
+
+      // Wait for play to confirm
+      await audioPlayerRef.current.play();
+
+      setLoadingAudioId(null); // Stop loading
+      setPlayingMessageId(index); // Show pause icon (playing)
+
+      audioPlayerRef.current.onended = () => {
+        setPlayingMessageId(null);
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      audioPlayerRef.current.onerror = (e) => {
+        console.error("Audio playback error", e);
+        setLoadingAudioId(null);
+        setPlayingMessageId(null);
+      };
+
+    } catch (error) {
+      console.error("TTS Error:", error);
+      setLoadingAudioId(null);
+      setPlayingMessageId(null);
+      alert(`Failed to play audio: ${error.message}`);
     }
   };
 
@@ -349,6 +417,24 @@ const ChatWindow = ({
                       <span className="typing-dot" />
                     </div>
                   )
+                )}
+
+                {/* Audio Playback Button for AI messages */}
+                {msg.role === "ai" && msg.content && (
+                  <button
+                    className="audio-play-btn mt-2 text-gray-400 hover:text-white transition-colors"
+                    onClick={() => handlePlayAudio(msg.content, idx)}
+                    title="Read aloud"
+                    disabled={loadingAudioId !== null || (playingMessageId !== null && playingMessageId !== idx)}
+                  >
+                    {loadingAudioId === idx ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : playingMessageId === idx ? (
+                      <Pause className="w-4 h-4" />
+                    ) : (
+                      <Volume2 className="w-4 h-4" />
+                    )}
+                  </button>
                 )}
               </div>
             </motion.div>

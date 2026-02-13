@@ -91,8 +91,8 @@ class GraphBuilder:
 
 # For langsmith Studio 
 # Default export for LangGraph Studio
-from langgraph.checkpoint.memory import MemorySaver
-graph = GraphBuilder(checkpointer=MemorySaver()).build_graph()
+# from langgraph.checkpoint.memory import MemorySaver
+# graph = GraphBuilder(checkpointer=MemorySaver()).build_graph()
 
 
 # or using cli
